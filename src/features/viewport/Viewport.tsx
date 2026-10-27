@@ -22,6 +22,22 @@ export function Viewport() {
   const meshMap = useRef(new Map<string, THREE.Mesh>());
   const transformRef = useRef<TransformControls | null>(null);
   const orbitRef = useRef<OrbitControls | null>(null);
+  const objectsRef = useRef(objects);
+  const selectedIdRef = useRef(selectedId);
+  objectsRef.current = objects;
+  selectedIdRef.current = selectedId;
+  const modeRef = useRef<TransformMode>("translate");
+  const dimensionHandles = useRef<THREE.Mesh[]>([]);
+  const dragState = useRef<{
+    objectId: string;
+    axis: "x" | "y" | "z";
+    sign: 1 | -1;
+    startPoint: THREE.Vector3;
+    plane: THREE.Plane;
+    axisDirection: THREE.Vector3;
+    startDimensions: { x: number; y: number; z: number };
+    startPosition: { x: number; y: number; z: number };
+  } | null>(null);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -49,6 +65,26 @@ export function Viewport() {
     transform.setSize(0.85);
     transformRef.current = transform;
     scene.add(transform.getHelper());
+
+    // Six face-center handles for direct dimension editing in Scale mode.
+    const handleMaterial = [
+      new THREE.MeshBasicMaterial({ color: "#ef4444", depthTest: false }),
+      new THREE.MeshBasicMaterial({ color: "#ef4444", depthTest: false }),
+      new THREE.MeshBasicMaterial({ color: "#22c55e", depthTest: false }),
+      new THREE.MeshBasicMaterial({ color: "#22c55e", depthTest: false }),
+      new THREE.MeshBasicMaterial({ color: "#3b82f6", depthTest: false }),
+      new THREE.MeshBasicMaterial({ color: "#3b82f6", depthTest: false })
+    ];
+    for (let i = 0; i < 6; i++) {
+      const handle = new THREE.Mesh(new THREE.SphereGeometry(1.35, 20, 16), handleMaterial[i]);
+      handle.renderOrder = 10;
+      handle.userData.dimensionHandle = true;
+      handle.userData.axis = (["x", "x", "y", "y", "z", "z"] as const)[i];
+      handle.userData.sign = ([1, -1, 1, -1, 1, -1] as const)[i];
+      handle.visible = false;
+      dimensionHandles.current.push(handle);
+      scene.add(handle);
+    }
 
     transform.addEventListener("dragging-changed", (event) => {
       controls.enabled = !event.value;
@@ -94,16 +130,84 @@ export function Viewport() {
 
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
-    const onPointerDown = (event: PointerEvent) => {
-      if (transform.dragging) return;
+    const getPointer = (event: PointerEvent) => {
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      if (transform.dragging) return;
+      getPointer(event);
+      if (modeRef.current === "scale") {
+        const handleHit = raycaster.intersectObjects(dimensionHandles.current, false)[0];
+        const handle = handleHit?.object as THREE.Mesh | undefined;
+        const selected = selectedIdRef.current ? meshMap.current.get(selectedIdRef.current) : undefined;
+        if (handle && selected) {
+          const axis = handle.userData.axis as "x" | "y" | "z";
+          const sign = handle.userData.sign as 1 | -1;
+          selected.updateMatrixWorld(true);
+          const axisDirection = new THREE.Vector3(
+            axis === "x" ? 1 : 0,
+            axis === "y" ? 1 : 0,
+            axis === "z" ? 1 : 0
+          ).applyQuaternion(selected.quaternion).normalize();
+          const cameraDirection = new THREE.Vector3();
+          camera.getWorldDirection(cameraDirection);
+          const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(cameraDirection, handle.position);
+          const startPoint = new THREE.Vector3();
+          if (raycaster.ray.intersectPlane(plane, startPoint)) {
+            const object = objectsRef.current.find((item) => item.id === selected.userData.objectId);
+            if (object) {
+              dragState.current = {
+                objectId: object.id,
+                axis,
+                sign,
+                startPoint,
+                plane,
+                axisDirection,
+                startDimensions: { ...object.dimensions },
+                startPosition: { ...object.position }
+              };
+              controls.enabled = false;
+              event.preventDefault();
+              return;
+            }
+          }
+        }
+      }
       const hits = raycaster.intersectObjects([...meshMap.current.values()], false);
       selectObject(hits[0]?.object.userData.objectId ?? null);
     };
+    const onPointerMove = (event: PointerEvent) => {
+      const drag = dragState.current;
+      if (!drag) return;
+      getPointer(event);
+      const point = new THREE.Vector3();
+      if (!raycaster.ray.intersectPlane(drag.plane, point)) return;
+      const delta = point.sub(drag.startPoint).dot(drag.axisDirection) * drag.sign;
+      const dimensions = { ...drag.startDimensions, [drag.axis]: Math.max(0.5, drag.startDimensions[drag.axis] + delta) };
+      const startSize = drag.startDimensions[drag.axis];
+      const newSize = dimensions[drag.axis];
+      // Keep the opposite face fixed in world space while moving only the dragged face.
+      const oppositeFace = drag.axisDirection.clone().multiplyScalar(-drag.sign * startSize / 2);
+      oppositeFace.add(new THREE.Vector3(drag.startPosition.x, drag.startPosition.y, drag.startPosition.z));
+      const positionVector = oppositeFace.add(
+        drag.axisDirection.clone().multiplyScalar(drag.sign * newSize / 2)
+      );
+      const position = { x: positionVector.x, y: positionVector.y, z: positionVector.z };
+      updateObject(drag.objectId, { dimensions, position });
+    };
+    const onPointerUp = () => {
+      if (dragState.current) {
+        dragState.current = null;
+        controls.enabled = true;
+      }
+    };
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
+    renderer.domElement.addEventListener("pointermove", onPointerMove);
+    renderer.domElement.addEventListener("pointerup", onPointerUp);
+    renderer.domElement.addEventListener("pointercancel", onPointerUp);
 
     let frame = 0;
     const animate = () => {
@@ -117,6 +221,15 @@ export function Viewport() {
       cancelAnimationFrame(frame);
       observer.disconnect();
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
+      renderer.domElement.removeEventListener("pointermove", onPointerMove);
+      renderer.domElement.removeEventListener("pointerup", onPointerUp);
+      renderer.domElement.removeEventListener("pointercancel", onPointerUp);
+      dimensionHandles.current.forEach((handle) => {
+        handle.geometry.dispose();
+        (handle.material as THREE.Material).dispose();
+        scene.remove(handle);
+      });
+      dimensionHandles.current = [];
       controls.dispose();
       transform.dispose();
       transformRef.current = null;
@@ -135,7 +248,31 @@ export function Viewport() {
   }, [selectObject, updateObject]);
 
   useEffect(() => {
-    transformRef.current?.setMode(mode);
+    modeRef.current = mode;
+    const transform = transformRef.current;
+    const selected = selectedIdRef.current ? meshMap.current.get(selectedIdRef.current) : undefined;
+    if (transform) {
+      transform.setMode(mode);
+      transform.getHelper().visible = mode !== "scale";
+      if (mode === "scale") transform.detach();
+      else if (selected) transform.attach(selected);
+    }
+    dimensionHandles.current.forEach((handle) => {
+      handle.visible = Boolean(selected && mode === "scale");
+    });
+    if (selected) {
+      selected.updateMatrixWorld(true);
+      dimensionHandles.current.forEach((handle) => {
+        const axis = handle.userData.axis as "x" | "y" | "z";
+        const sign = handle.userData.sign as 1 | -1;
+        const localPoint = new THREE.Vector3(
+          axis === "x" ? 0.5 * sign : 0,
+          axis === "y" ? 0.5 * sign : 0,
+          axis === "z" ? 0.5 * sign : 0
+        );
+        handle.position.copy(selected.localToWorld(localPoint));
+      });
+    }
   }, [mode]);
 
   useEffect(() => {
@@ -186,8 +323,25 @@ export function Viewport() {
     }
 
     const selectedMesh = selectedId ? existing.get(selectedId) : undefined;
-    if (selectedMesh) transformRef.current?.attach(selectedMesh);
+    if (selectedMesh && modeRef.current !== "scale") transformRef.current?.attach(selectedMesh);
     else transformRef.current?.detach();
+
+    dimensionHandles.current.forEach((handle) => {
+      handle.visible = Boolean(selectedMesh && modeRef.current === "scale");
+    });
+    if (selectedMesh) {
+      selectedMesh.updateMatrixWorld(true);
+      dimensionHandles.current.forEach((handle) => {
+        const axis = handle.userData.axis as "x" | "y" | "z";
+        const sign = handle.userData.sign as 1 | -1;
+        const localPoint = new THREE.Vector3(
+          axis === "x" ? 0.5 * sign : 0,
+          axis === "y" ? 0.5 * sign : 0,
+          axis === "z" ? 0.5 * sign : 0
+        );
+        handle.position.copy(selectedMesh.localToWorld(localPoint));
+      });
+    }
   }, [objects, selectedId]);
 
   return (
