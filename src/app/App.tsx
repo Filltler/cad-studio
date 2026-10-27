@@ -109,7 +109,7 @@ export function App() {
                       type="number"
                       min="0.1"
                       step="0.1"
-                      value={selected.dimensions[axis]}
+                      value={Number(selected.dimensions[axis].toFixed(2))}
                       onChange={(event) => {
                         const value = Number(event.target.value);
                         if (Number.isFinite(value) && value > 0) {
@@ -130,7 +130,7 @@ export function App() {
                     <input
                       type="number"
                       step="1"
-                      value={selected.position[axis]}
+                      value={Number(selected.position[axis].toFixed(2))}
                       onChange={(event) => {
                         const value = Number(event.target.value);
                         if (Number.isFinite(value)) {
@@ -151,7 +151,7 @@ export function App() {
                     <input
                       type="number"
                       step="15"
-                      value={selected.rotation?.[axis] ?? 0}
+                      value={Number((selected.rotation?.[axis] ?? 0).toFixed(2))}
                       onChange={(event) => {
                         const value = Number(event.target.value);
                         if (Number.isFinite(value)) {
