@@ -260,6 +260,19 @@ export function Viewport() {
     dimensionHandles.current.forEach((handle) => {
       handle.visible = Boolean(selected && mode === "scale");
     });
+    if (selected) {
+      selected.updateMatrixWorld(true);
+      dimensionHandles.current.forEach((handle) => {
+        const axis = handle.userData.axis as "x" | "y" | "z";
+        const sign = handle.userData.sign as 1 | -1;
+        const localPoint = new THREE.Vector3(
+          axis === "x" ? selected.scale.x / 2 * sign : 0,
+          axis === "y" ? selected.scale.y / 2 * sign : 0,
+          axis === "z" ? selected.scale.z / 2 * sign : 0
+        );
+        handle.position.copy(selected.localToWorld(localPoint));
+      });
+    }
   }, [mode]);
 
   useEffect(() => {
