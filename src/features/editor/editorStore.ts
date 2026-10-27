@@ -6,7 +6,7 @@ type EditorState = {
   selectedId: string | null;
   addPrimitive: (kind: PrimitiveKind) => void;
   selectObject: (id: string | null) => void;
-  updateObject: (id: string, patch: Partial<Pick<ProjectObject, "position" | "dimensions">>) => void;
+  updateObject: (id: string, patch: Partial<Pick<ProjectObject, "position" | "dimensions" | "rotation">>) => void;
 };
 
 const defaultDimensions: Record<PrimitiveKind, Vector3> = {
@@ -22,7 +22,8 @@ export const useEditorStore = create<EditorState>((set) => ({
       name: "Cubo 1",
       kind: "box",
       position: { x: 0, y: 10, z: 0 },
-      dimensions: { x: 20, y: 20, z: 20 }
+      dimensions: { x: 20, y: 20, z: 20 },
+      rotation: { x: 0, y: 0, z: 0 }
     }
   ],
   selectedId: null,
@@ -33,7 +34,8 @@ export const useEditorStore = create<EditorState>((set) => ({
       name: `${kind === "box" ? "Cubo" : kind === "cylinder" ? "Cilindro" : "Esfera"} ${number}`,
       kind,
       position: { x: state.objects.length * 8, y: defaultDimensions[kind].y / 2, z: 0 },
-      dimensions: { ...defaultDimensions[kind] }
+      dimensions: { ...defaultDimensions[kind] },
+      rotation: { x: 0, y: 0, z: 0 }
     };
     return { objects: [...state.objects, object], selectedId: object.id };
   }),
