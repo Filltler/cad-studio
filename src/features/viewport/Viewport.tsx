@@ -266,9 +266,9 @@ export function Viewport() {
         const axis = handle.userData.axis as "x" | "y" | "z";
         const sign = handle.userData.sign as 1 | -1;
         const localPoint = new THREE.Vector3(
-          axis === "x" ? selected.scale.x / 2 * sign : 0,
-          axis === "y" ? selected.scale.y / 2 * sign : 0,
-          axis === "z" ? selected.scale.z / 2 * sign : 0
+          axis === "x" ? 0.5 * sign : 0,
+          axis === "y" ? 0.5 * sign : 0,
+          axis === "z" ? 0.5 * sign : 0
         );
         handle.position.copy(selected.localToWorld(localPoint));
       });
@@ -335,9 +335,9 @@ export function Viewport() {
         const axis = handle.userData.axis as "x" | "y" | "z";
         const sign = handle.userData.sign as 1 | -1;
         const localPoint = new THREE.Vector3(
-          axis === "x" ? selectedMesh.scale.x / 2 * sign : 0,
-          axis === "y" ? selectedMesh.scale.y / 2 * sign : 0,
-          axis === "z" ? selectedMesh.scale.z / 2 * sign : 0
+          axis === "x" ? 0.5 * sign : 0,
+          axis === "y" ? 0.5 * sign : 0,
+          axis === "z" ? 0.5 * sign : 0
         );
         handle.position.copy(selectedMesh.localToWorld(localPoint));
       });
