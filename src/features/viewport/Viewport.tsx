@@ -249,9 +249,14 @@ export function Viewport() {
 
   useEffect(() => {
     modeRef.current = mode;
-    transformRef.current?.setMode(mode);
-    if (transformRef.current) transformRef.current.getHelper().visible = mode !== "scale";
+    const transform = transformRef.current;
     const selected = selectedIdRef.current ? meshMap.current.get(selectedIdRef.current) : undefined;
+    if (transform) {
+      transform.setMode(mode);
+      transform.getHelper().visible = mode !== "scale";
+      if (mode === "scale") transform.detach();
+      else if (selected) transform.attach(selected);
+    }
     dimensionHandles.current.forEach((handle) => {
       handle.visible = Boolean(selected && mode === "scale");
     });
@@ -305,7 +310,7 @@ export function Viewport() {
     }
 
     const selectedMesh = selectedId ? existing.get(selectedId) : undefined;
-    if (selectedMesh) transformRef.current?.attach(selectedMesh);
+    if (selectedMesh && modeRef.current !== "scale") transformRef.current?.attach(selectedMesh);
     else transformRef.current?.detach();
 
     dimensionHandles.current.forEach((handle) => {
