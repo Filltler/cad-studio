@@ -21,7 +21,7 @@ export function Viewport() {
   const [mode, setMode] = useState<TransformMode>("translate");
   const meshMap = useRef(new Map<string, THREE.Mesh>());
   const transformRef = useRef<TransformControls | null>(null);
-  const orbitRef = useRef<OrbitControls | null>(null);
+  const orbitRef = useRef<OrbitControls | null>(null);\n  const objectsRef = useRef(objects);\n  const selectedIdRef = useRef(selectedId);\n  objectsRef.current = objects;\n  selectedIdRef.current = selectedId;
   const modeRef = useRef<TransformMode>("translate");
   const dimensionHandles = useRef<THREE.Mesh[]>([]);
   const dragState = useRef<{
