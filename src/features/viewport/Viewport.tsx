@@ -22,6 +22,18 @@ export function Viewport() {
   const meshMap = useRef(new Map<string, THREE.Mesh>());
   const transformRef = useRef<TransformControls | null>(null);
   const orbitRef = useRef<OrbitControls | null>(null);
+  const modeRef = useRef<TransformMode>("translate");
+  const dimensionHandles = useRef<THREE.Mesh[]>([]);
+  const dragState = useRef<{
+    objectId: string;
+    axis: "x" | "y" | "z";
+    sign: 1 | -1;
+    startPoint: THREE.Vector3;
+    plane: THREE.Plane;
+    axisDirection: THREE.Vector3;
+    startDimensions: { x: number; y: number; z: number };
+    startPosition: { x: number; y: number; z: number };
+  } | null>(null);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -49,6 +61,26 @@ export function Viewport() {
     transform.setSize(0.85);
     transformRef.current = transform;
     scene.add(transform.getHelper());
+
+    // Six face-center handles for direct dimension editing in Scale mode.
+    const handleMaterial = [
+      new THREE.MeshBasicMaterial({ color: "#ef4444", depthTest: false }),
+      new THREE.MeshBasicMaterial({ color: "#ef4444", depthTest: false }),
+      new THREE.MeshBasicMaterial({ color: "#22c55e", depthTest: false }),
+      new THREE.MeshBasicMaterial({ color: "#22c55e", depthTest: false }),
+      new THREE.MeshBasicMaterial({ color: "#3b82f6", depthTest: false }),
+      new THREE.MeshBasicMaterial({ color: "#3b82f6", depthTest: false })
+    ];
+    for (let i = 0; i < 6; i++) {
+      const handle = new THREE.Mesh(new THREE.SphereGeometry(0.85, 16, 12), handleMaterial[i]);
+      handle.renderOrder = 10;
+      handle.userData.dimensionHandle = true;
+      handle.userData.axis = (["x", "x", "y", "y", "z", "z"] as const)[i];
+      handle.userData.sign = ([1, -1, 1, -1, 1, -1] as const)[i];
+      handle.visible = false;
+      dimensionHandles.current.push(handle);
+      scene.add(handle);
+    }
 
     transform.addEventListener("dragging-changed", (event) => {
       controls.enabled = !event.value;
@@ -103,7 +135,36 @@ export function Viewport() {
       const hits = raycaster.intersectObjects([...meshMap.current.values()], false);
       selectObject(hits[0]?.object.userData.objectId ?? null);
     };
+    const onPointerMove = (event: PointerEvent) => {
+      const drag = dragState.current;
+      if (!drag) return;
+      getPointer(event);
+      const point = new THREE.Vector3();
+      if (!raycaster.ray.intersectPlane(drag.plane, point)) return;
+      const delta = point.sub(drag.startPoint).dot(drag.axisDirection) * drag.sign;
+      const dimensions = { ...drag.startDimensions, [drag.axis]: Math.max(0.5, drag.startDimensions[drag.axis] + delta * 2) };
+      const actualDelta = (dimensions[drag.axis] - drag.startDimensions[drag.axis]) / 2;
+      const position = { ...drag.startPosition, [drag.axis]: drag.startPosition[drag.axis] + actualDelta * drag.sign };
+      // Position shift follows the rotated local axis, not the world axis.
+      const mesh = meshMap.current.get(drag.objectId);
+      if (mesh) {
+        const shift = drag.axisDirection.clone().multiplyScalar(actualDelta * drag.sign);
+        position.x = drag.startPosition.x + shift.x;
+        position.y = drag.startPosition.y + shift.y;
+        position.z = drag.startPosition.z + shift.z;
+      }
+      updateObject(drag.objectId, { dimensions, position });
+    };
+    const onPointerUp = () => {
+      if (dragState.current) {
+        dragState.current = null;
+        controls.enabled = true;
+      }
+    };
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
+    renderer.domElement.addEventListener("pointermove", onPointerMove);
+    renderer.domElement.addEventListener("pointerup", onPointerUp);
+    renderer.domElement.addEventListener("pointercancel", onPointerUp);
 
     let frame = 0;
     const animate = () => {
@@ -117,6 +178,15 @@ export function Viewport() {
       cancelAnimationFrame(frame);
       observer.disconnect();
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
+      renderer.domElement.removeEventListener("pointermove", onPointerMove);
+      renderer.domElement.removeEventListener("pointerup", onPointerUp);
+      renderer.domElement.removeEventListener("pointercancel", onPointerUp);
+      dimensionHandles.current.forEach((handle) => {
+        handle.geometry.dispose();
+        (handle.material as THREE.Material).dispose();
+        scene.remove(handle);
+      });
+      dimensionHandles.current = [];
       controls.dispose();
       transform.dispose();
       transformRef.current = null;
@@ -135,7 +205,7 @@ export function Viewport() {
   }, [selectObject, updateObject]);
 
   useEffect(() => {
-    transformRef.current?.setMode(mode);
+    modeRef.current = mode;\n    transformRef.current?.setMode(mode);
   }, [mode]);
 
   useEffect(() => {
