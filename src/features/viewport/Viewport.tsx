@@ -130,6 +130,12 @@ export function Viewport() {
 
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
+    const getPointer = (event: PointerEvent) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+    };
     const onPointerDown = (event: PointerEvent) => {
       if (transform.dragging) return;
       const rect = renderer.domElement.getBoundingClientRect();
