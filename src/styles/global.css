@@ -1,0 +1,76 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #e5e7eb;
+  background: #0b1120;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  --panel: #111827;
+  --panel-border: #253247;
+  --muted: #94a3b8;
+  --accent: #818cf8;
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 980px; min-height: 100vh; }
+button, input { font: inherit; }
+button { cursor: pointer; }
+.app-shell { height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+.topbar { height: 66px; flex: 0 0 66px; display: flex; align-items: center; gap: 12px; padding: 0 18px; border-bottom: 1px solid var(--panel-border); background: #0f172a; }
+.brand-mark { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 11px; background: linear-gradient(135deg, #818cf8, #6366f1); color: white; font-weight: 800; font-size: 20px; }
+.brand-copy { display: flex; flex-direction: column; gap: 2px; }
+.brand-copy strong { font-size: 14px; letter-spacing: .2px; }
+.brand-copy span { color: var(--muted); font-size: 11px; }
+.topbar-spacer { flex: 1; }
+.unit-chip, .subtle-chip { border: 1px solid #334155; border-radius: 7px; padding: 7px 9px; color: #cbd5e1; font-size: 11px; }
+.primary-button, .secondary-button { border-radius: 8px; padding: 9px 12px; font-size: 12px; font-weight: 650; }
+.primary-button { color: white; background: #6366f1; border: 1px solid #818cf8; }
+.secondary-button { color: #dbeafe; background: #1e293b; border: 1px solid #334155; }
+.workspace { min-height: 0; flex: 1; display: grid; grid-template-columns: 220px minmax(400px, 1fr) 245px; }
+.sidebar, .properties-panel { background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+.sidebar { border-right: 1px solid var(--panel-border); }
+.properties-panel { border-left: 1px solid var(--panel-border); }
+.section-heading { padding: 19px 15px 11px; color: #a5b4fc; text-transform: uppercase; font-size: 10px; font-weight: 750; letter-spacing: 1px; }
+.tool-button { margin: 3px 9px; padding: 10px; display: flex; align-items: center; gap: 11px; text-align: left; border: 1px solid transparent; border-radius: 9px; color: #e2e8f0; background: transparent; }
+.tool-button:hover { background: #1e293b; border-color: #334155; }
+.tool-icon { display: grid; place-items: center; width: 35px; height: 35px; border-radius: 8px; background: #202d45; color: #a5b4fc; font-size: 21px; }
+.tool-button b { display: block; font-size: 12px; font-weight: 650; }
+.tool-button small, .selected-object-card small { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; }
+.object-heading { display: flex; justify-content: space-between; margin-top: 18px; border-top: 1px solid var(--panel-border); }
+.object-heading span { color: #e2e8f0; }
+.object-list { padding: 0 9px; overflow-y: auto; }
+.object-row { width: 100%; display: flex; align-items: center; gap: 9px; padding: 10px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: #cbd5e1; text-align: left; font-size: 12px; }
+.object-row.selected { background: #242e4d; border-color: #4f5eaa; color: white; }
+.object-dot { width: 9px; height: 9px; border-radius: 3px; background: #818cf8; }
+.empty-note { color: var(--muted); font-size: 11px; padding: 8px; }
+.sidebar-footer { margin-top: auto; padding: 13px; border-top: 1px solid var(--panel-border); color: var(--muted); font-size: 10px; }
+.status-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #34d399; margin-right: 7px; }
+.viewport-panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: #101827; }
+.viewport-toolbar, .viewport-bottom { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; }
+.viewport-toolbar { border-bottom: 1px solid #1f2b3d; }
+.viewport-label { color: #94a3b8; font-size: 10px; font-weight: 750; letter-spacing: 1px; }
+.viewport-actions { display: flex; gap: 7px; }
+.subtle-chip { padding: 5px 8px; font-size: 10px; }
+.viewport-canvas { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+.viewport-canvas canvas { display: block; width: 100%; height: 100%; outline: none; }
+.viewport-bottom { border-top: 1px solid #1f2b3d; color: #718096; font-size: 10px; }
+.property-section { padding: 15px; border-top: 1px solid var(--panel-border); }
+.property-title { display: flex; justify-content: space-between; color: #cbd5e1; font-size: 11px; font-weight: 700; margin-bottom: 11px; }
+.property-title span { color: var(--muted); font-weight: 400; }
+.selected-object-card { display: flex; gap: 10px; align-items: center; padding: 13px 15px 16px; }
+.selected-object-card b { font-size: 12px; }
+.object-preview { display: grid; place-items: center; width: 36px; height: 36px; background: #242e4d; color: #a5b4fc; border-radius: 9px; font-size: 22px; }
+.property-row { display: grid; grid-template-columns: 24px 1fr; align-items: center; gap: 8px; margin: 8px 0; }
+.property-row > span { color: var(--muted); font-size: 10px; font-weight: 700; }
+.property-row input { min-width: 0; width: 100%; border: 1px solid #334155; border-radius: 6px; background: #0b1220; color: #e2e8f0; padding: 7px 8px; font-size: 11px; outline: none; }
+.property-row input:focus { border-color: #818cf8; }
+.no-selection { margin: 20px 15px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 9px; color: var(--muted); }
+.no-selection span { font-size: 32px; color: #64748b; }
+.no-selection b { font-size: 12px; color: #cbd5e1; }
+.no-selection p { font-size: 11px; line-height: 1.6; }
+.advanced-note { margin: 0 13px; padding: 12px; border: 1px solid #3b4272; border-radius: 8px; background: #1c2340; font-size: 11px; }
+.advanced-note p { color: #cbd5e1; line-height: 1.5; }
+.properties-footer { margin-top: auto; padding: 12px; border-top: 1px solid var(--panel-border); color: var(--muted); font-size: 10px; line-height: 1.5; }
+@media (max-width: 1100px) {
+  .workspace { grid-template-columns: 190px minmax(350px, 1fr) 220px; }
+  .topbar { padding: 0 12px; }
+}
