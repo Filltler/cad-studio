@@ -1,14 +1,27 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { useEditorStore } from "../editor/editorStore";
+
+type TransformMode = "translate" | "rotate" | "scale";
+
+const modeLabels: Record<TransformMode, string> = {
+  translate: "Mover",
+  rotate: "Rotar",
+  scale: "Escalar"
+};
 
 export function Viewport() {
   const hostRef = useRef<HTMLDivElement>(null);
   const objects = useEditorStore((s) => s.objects);
   const selectedId = useEditorStore((s) => s.selectedId);
   const selectObject = useEditorStore((s) => s.selectObject);
+  const updateObject = useEditorStore((s) => s.updateObject);
+  const [mode, setMode] = useState<TransformMode>("translate");
   const meshMap = useRef(new Map<string, THREE.Mesh>());
+  const transformRef = useRef<TransformControls | null>(null);
+  const orbitRef = useRef<OrbitControls | null>(null);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -27,14 +40,41 @@ export function Viewport() {
     host.appendChild(renderer.domElement);
 
     const controls = new OrbitControls(camera, renderer.domElement);
+    orbitRef.current = controls;
     controls.enableDamping = true;
     controls.target.set(0, 10, 0);
 
+    const transform = new TransformControls(camera, renderer.domElement);
+    transform.setMode(mode);
+    transform.setSize(0.85);
+    transformRef.current = transform;
+    scene.add(transform.getHelper());
+
+    transform.addEventListener("dragging-changed", (event) => {
+      controls.enabled = !event.value;
+    });
+    transform.addEventListener("objectChange", () => {
+      const mesh = transform.object as THREE.Mesh | undefined;
+      const id = mesh?.userData.objectId as string | undefined;
+      if (!mesh || !id) return;
+      updateObject(id, {
+        position: { x: mesh.position.x, y: mesh.position.y, z: mesh.position.z },
+        dimensions: {
+          x: Math.max(0.1, Math.abs(mesh.scale.x)),
+          y: Math.max(0.1, Math.abs(mesh.scale.y)),
+          z: Math.max(0.1, Math.abs(mesh.scale.z))
+        },
+        rotation: {
+          x: THREE.MathUtils.radToDeg(mesh.rotation.x),
+          y: THREE.MathUtils.radToDeg(mesh.rotation.y),
+          z: THREE.MathUtils.radToDeg(mesh.rotation.z)
+        }
+      });
+    });
+
     scene.add(new THREE.GridHelper(200, 40, "#64748b", "#263449"));
     scene.add(new THREE.AxesHelper(30));
-
-    const ambient = new THREE.HemisphereLight("#dbeafe", "#334155", 2.0);
-    scene.add(ambient);
+    scene.add(new THREE.HemisphereLight("#dbeafe", "#334155", 2.0));
     const keyLight = new THREE.DirectionalLight("#ffffff", 2.5);
     keyLight.position.set(80, 120, 60);
     scene.add(keyLight);
@@ -55,6 +95,7 @@ export function Viewport() {
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
     const onPointerDown = (event: PointerEvent) => {
+      if (transform.dragging) return;
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -77,6 +118,9 @@ export function Viewport() {
       observer.disconnect();
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       controls.dispose();
+      transform.dispose();
+      transformRef.current = null;
+      orbitRef.current = null;
       meshMap.current.forEach((mesh) => {
         mesh.geometry.dispose();
         const material = mesh.material;
@@ -88,13 +132,15 @@ export function Viewport() {
       renderer.dispose();
       renderer.domElement.remove();
     };
-  }, [selectObject]);
+  }, [selectObject, updateObject]);
+
+  useEffect(() => {
+    transformRef.current?.setMode(mode);
+  }, [mode]);
 
   useEffect(() => {
     const host = hostRef.current;
-    const canvas = host?.querySelector("canvas");
-    if (!host || !canvas) return;
-
+    if (!host?.querySelector("canvas")) return;
     const scene = (host as HTMLDivElement & { __cadScene?: THREE.Scene }).__cadScene;
     if (!scene) return;
 
@@ -102,9 +148,12 @@ export function Viewport() {
     const ids = new Set(objects.map((o) => o.id));
     for (const [id, mesh] of existing) {
       if (!ids.has(id)) {
+        if (transformRef.current?.object === mesh) transformRef.current.detach();
         scene.remove(mesh);
         mesh.geometry.dispose();
-        (mesh.material as THREE.Material).dispose();
+        const material = mesh.material;
+        if (Array.isArray(material)) material.forEach((m) => m.dispose());
+        else material.dispose();
         existing.delete(id);
       }
     }
@@ -135,7 +184,30 @@ export function Viewport() {
       );
       (mesh.material as THREE.MeshStandardMaterial).color.set(object.id === selectedId ? "#60a5fa" : "#8b9cf6");
     }
+
+    const selectedMesh = selectedId ? existing.get(selectedId) : undefined;
+    if (selectedMesh) transformRef.current?.attach(selectedMesh);
+    else transformRef.current?.detach();
   }, [objects, selectedId]);
 
-  return <div className="viewport-canvas" ref={hostRef} />;
+  return (
+    <div className="viewport-stage">
+      <div className="transform-toolbar" role="toolbar" aria-label="Herramientas de transformación">
+        {(Object.keys(modeLabels) as TransformMode[]).map((key) => (
+          <button
+            key={key}
+            type="button"
+            className={`transform-mode-button ${mode === key ? "active" : ""}`}
+            onClick={() => setMode(key)}
+            aria-pressed={mode === key}
+            title={`Modo ${modeLabels[key].toLowerCase()}`}
+          >
+            {key === "translate" ? "↔" : key === "rotate" ? "⟳" : "⤢"} {modeLabels[key]}
+          </button>
+        ))}
+        <span className="transform-hint">Seleccioná una pieza y arrastrá los controles</span>
+      </div>
+      <div className="viewport-canvas" ref={hostRef} />
+    </div>
+  );
 }

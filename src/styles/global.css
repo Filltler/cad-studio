@@ -74,3 +74,15 @@ button { cursor: pointer; }
   .workspace { grid-template-columns: 190px minmax(350px, 1fr) 220px; }
   .topbar { padding: 0 12px; }
 }
+
+
+/* Interactive viewport transform tools */
+.viewport-stage { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.transform-toolbar { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; padding: 9px 12px; border-bottom: 1px solid #1f2b3d; background: #0f172a; }
+.transform-mode-button { display: inline-flex; align-items: center; gap: 5px; border: 1px solid #334155; border-radius: 7px; padding: 7px 10px; color: #cbd5e1; background: #172033; font-size: 11px; font-weight: 650; }
+.transform-mode-button:hover { border-color: #818cf8; color: #fff; }
+.transform-mode-button.active { border-color: #818cf8; color: #fff; background: #30366b; box-shadow: inset 0 0 0 1px #6366f1; }
+.transform-hint { margin-left: auto; color: #94a3b8; font-size: 10px; }
+@media (max-width: 1100px) {
+  .transform-hint { flex-basis: 100%; margin-left: 0; }
+}
