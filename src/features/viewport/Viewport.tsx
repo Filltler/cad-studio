@@ -205,7 +205,7 @@ export function Viewport() {
   }, [selectObject, updateObject]);
 
   useEffect(() => {
-    modeRef.current = mode;\n    transformRef.current?.setMode(mode);
+    modeRef.current = mode;\n    transformRef.current?.setMode(mode);\n    if (transformRef.current) transformRef.current.getHelper().visible = mode !== "scale";
   }, [mode]);
 
   useEffect(() => {
