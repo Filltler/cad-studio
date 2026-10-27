@@ -152,13 +152,13 @@ export function Viewport() {
       const point = new THREE.Vector3();
       if (!raycaster.ray.intersectPlane(drag.plane, point)) return;
       const delta = point.sub(drag.startPoint).dot(drag.axisDirection) * drag.sign;
-      const dimensions = { ...drag.startDimensions, [drag.axis]: Math.max(0.5, drag.startDimensions[drag.axis] + delta * 2) };
-      const actualDelta = (dimensions[drag.axis] - drag.startDimensions[drag.axis]) / 2;
+      const dimensions = { ...drag.startDimensions, [drag.axis]: Math.max(0.5, drag.startDimensions[drag.axis] + delta) };
+      const actualDelta = dimensions[drag.axis] - drag.startDimensions[drag.axis];
       const position = { ...drag.startPosition, [drag.axis]: drag.startPosition[drag.axis] + actualDelta * drag.sign };
       // Position shift follows the rotated local axis, not the world axis.
       const mesh = meshMap.current.get(drag.objectId);
       if (mesh) {
-        const shift = drag.axisDirection.clone().multiplyScalar(actualDelta * drag.sign);
+        const shift = drag.axisDirection.clone().multiplyScalar(actualDelta * drag.sign / 2);
         position.x = drag.startPosition.x + shift.x;
         position.y = drag.startPosition.y + shift.y;
         position.z = drag.startPosition.z + shift.z;
