@@ -76,7 +76,7 @@ export function Viewport() {
       new THREE.MeshBasicMaterial({ color: "#3b82f6", depthTest: false })
     ];
     for (let i = 0; i < 6; i++) {
-      const handle = new THREE.Mesh(new THREE.SphereGeometry(0.85, 16, 12), handleMaterial[i]);
+      const handle = new THREE.Mesh(new THREE.SphereGeometry(1.35, 20, 16), handleMaterial[i]);
       handle.renderOrder = 10;
       handle.userData.dimensionHandle = true;
       handle.userData.axis = (["x", "x", "y", "y", "z", "z"] as const)[i];
