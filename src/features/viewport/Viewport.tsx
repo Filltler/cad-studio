@@ -21,7 +21,11 @@ export function Viewport() {
   const [mode, setMode] = useState<TransformMode>("translate");
   const meshMap = useRef(new Map<string, THREE.Mesh>());
   const transformRef = useRef<TransformControls | null>(null);
-  const orbitRef = useRef<OrbitControls | null>(null);\n  const objectsRef = useRef(objects);\n  const selectedIdRef = useRef(selectedId);\n  objectsRef.current = objects;\n  selectedIdRef.current = selectedId;
+  const orbitRef = useRef<OrbitControls | null>(null);
+  const objectsRef = useRef(objects);
+  const selectedIdRef = useRef(selectedId);
+  objectsRef.current = objects;
+  selectedIdRef.current = selectedId;
   const modeRef = useRef<TransformMode>("translate");
   const dimensionHandles = useRef<THREE.Mesh[]>([]);
   const dragState = useRef<{
@@ -205,7 +209,9 @@ export function Viewport() {
   }, [selectObject, updateObject]);
 
   useEffect(() => {
-    modeRef.current = mode;\n    transformRef.current?.setMode(mode);\n    if (transformRef.current) transformRef.current.getHelper().visible = mode !== "scale";
+    modeRef.current = mode;
+    transformRef.current?.setMode(mode);
+    if (transformRef.current) transformRef.current.getHelper().visible = mode !== "scale";
   }, [mode]);
 
   useEffect(() => {
