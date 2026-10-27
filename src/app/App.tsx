@@ -143,10 +143,31 @@ export function App() {
                   </label>
                 ))}
               </div>
+              <div className="property-section">
+                <div className="property-title">Rotación <span>grados</span></div>
+                {(["x", "y", "z"] as const).map((axis) => (
+                  <label className="property-row" key={axis}>
+                    <span>{axis.toUpperCase()}</span>
+                    <input
+                      type="number"
+                      step="15"
+                      value={selected.rotation?.[axis] ?? 0}
+                      onChange={(event) => {
+                        const value = Number(event.target.value);
+                        if (Number.isFinite(value)) {
+                          updateObject(selected.id, {
+                            rotation: { ...(selected.rotation ?? { x: 0, y: 0, z: 0 }), [axis]: value }
+                          });
+                        }
+                      }}
+                    />
+                  </label>
+                ))}
+              </div>
               {advanced && (
                 <div className="advanced-note">
                   <b>Modo avanzado</b>
-                  <p>Esta zona se ampliará con rotación, tolerancias, parámetros CAD, restricciones y datos geométricos.</p>
+                  <p>Esta zona se ampliará con tolerancias, parámetros CAD, restricciones y datos geométricos.</p>
                 </div>
               )}
             </>

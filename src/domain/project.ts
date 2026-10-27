@@ -9,6 +9,7 @@ export type ProjectObject = {
   kind: PrimitiveKind;
   position: Vector3;
   dimensions: Vector3;
+  rotation: Vector3;
 };
 
 const vectorSchema = z.object({
@@ -27,7 +28,8 @@ export const projectSchema = z.object({
     name: z.string().min(1),
     kind: z.enum(["box", "cylinder", "sphere"]),
     position: vectorSchema,
-    dimensions: vectorSchema.refine((v) => v.x > 0 && v.y > 0 && v.z > 0, "Las dimensiones deben ser positivas.")
+    dimensions: vectorSchema.refine((v) => v.x > 0 && v.y > 0 && v.z > 0, "Las dimensiones deben ser positivas."),
+    rotation: vectorSchema.default({ x: 0, y: 0, z: 0 })
   })),
   updatedAt: z.string().datetime()
 });
