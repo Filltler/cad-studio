@@ -95,13 +95,9 @@ export function Viewport() {
     const canvas = host?.querySelector("canvas");
     if (!host || !canvas) return;
 
-    // Scene data is rebuilt from the document state. The renderer/camera stay mounted.
-    // The scene is stored on the host to keep this starter small and easy to extend.
-    let scene = (host as HTMLDivElement & { __cadScene?: THREE.Scene }).__cadScene;
-    if (!scene) {
-      // The initial scene is created by the mount effect; this is populated below via a stable scene handle.
-      return;
-    }
+    const scene = (host as HTMLDivElement & { __cadScene?: THREE.Scene }).__cadScene;
+    if (!scene) return;
+
     const existing = meshMap.current;
     const ids = new Set(objects.map((o) => o.id));
     for (const [id, mesh] of existing) {
@@ -132,6 +128,11 @@ export function Viewport() {
       }
       mesh.position.set(object.position.x, object.position.y, object.position.z);
       mesh.scale.set(object.dimensions.x, object.dimensions.y, object.dimensions.z);
+      mesh.rotation.set(
+        THREE.MathUtils.degToRad(object.rotation?.x ?? 0),
+        THREE.MathUtils.degToRad(object.rotation?.y ?? 0),
+        THREE.MathUtils.degToRad(object.rotation?.z ?? 0)
+      );
       (mesh.material as THREE.MeshStandardMaterial).color.set(object.id === selectedId ? "#60a5fa" : "#8b9cf6");
     }
   }, [objects, selectedId]);
