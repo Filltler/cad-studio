@@ -11,7 +11,7 @@ export function App() {
   const [booleanSelection, setBooleanSelection] = useState<string[]>([]);
   const [viewportMultiSelect, setViewportMultiSelect] = useState(false);
   const [notice, setNotice] = useState("MiCAD · herramientas CAD en desarrollo");
-  const [wallThickness, setWallThickness] = useState("2");
+  const [wallThicknesses, setWallThicknesses] = useState({ left: "2", right: "2", front: "2", back: "2", bottom: "2" });
   const [numericDraft, setNumericDraft] = useState<Record<string, string>>({});
   const objects = useEditorStore((s) => s.objects);
   const selectedId = useEditorStore((s) => s.selectedId);
@@ -101,15 +101,24 @@ export function App() {
     }
     try {
       setNotice("Generando cavidad y comprobando la malla…");
-      const thickness = Number(wallThickness);
-      if (!wallThickness.trim() || !Number.isFinite(thickness) || thickness <= 0) {
-        setNotice("Ingresá un espesor mayor que 0 mm.");
+      const parsedWalls = {
+        left: Number(wallThicknesses.left),
+        right: Number(wallThicknesses.right),
+        front: Number(wallThicknesses.front),
+        back: Number(wallThicknesses.back),
+        bottom: Number(wallThicknesses.bottom)
+      };
+      const activeValues = selected.kind === "cylinder" ? [parsedWalls.left] : Object.values(parsedWalls);
+      if (activeValues.some((value) => !Number.isFinite(value) || value <= 0)) {
+        setNotice("Ingresá espesores mayores que 0 mm en todos los campos.");
         return;
       }
-      const vertices = await calculateHollow(selected, thickness);
+      const vertices = await calculateHollow(selected, selected.kind === "cylinder" ? parsedWalls.left : parsedWalls);
       applyBooleanResult([selected.id], `Vaciado ${selected.name}`, vertices);
       setBooleanSelection([]);
-      setNotice(`Vaciado completado con paredes de ${thickness} mm.`);
+      setNotice(selected.kind === "cylinder"
+        ? `Tubo generado con pared de ${parsedWalls.left} mm.`
+        : "Vaciado completado con espesores independientes.");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "No se pudo vaciar la pieza.");
     }
@@ -350,26 +359,48 @@ export function App() {
               </div>
               <div className="property-section">
                 <div className="property-title">Vaciado <span>mm</span></div>
-                <label className="property-row">
-                  <span>Espesor</span>
-                  <input
-                    aria-label="Espesor de pared para vaciado"
-                    type="number"
-                    min="0.1"
-                    max="100"
-                    step="0.1"
-                    value={wallThickness}
-                    onChange={(event) => setWallThickness(event.target.value)}
-                  />
-                </label>
-                <button
-                  className="primary-button"
-                  onClick={handleHollow}
-                  disabled={selected.kind !== "box" && selected.kind !== "cylinder"}
-                >
+                {selected.kind === "box" ? (
+                  <>
+                    {([
+                      ["left", "Izquierda"],
+                      ["right", "Derecha"],
+                      ["front", "Frontal"],
+                      ["back", "Trasera"],
+                      ["bottom", "Fondo / base"]
+                    ] as const).map(([side, label]) => (
+                      <label className="property-row" key={side}>
+                        <span>{label}</span>
+                        <input
+                          aria-label={`Espesor pared ${label}`}
+                          type="number"
+                          min="0.1"
+                          step="0.1"
+                          value={wallThicknesses[side]}
+                          onChange={(event) => setWallThicknesses((current) => ({ ...current, [side]: event.target.value }))}
+                        />
+                      </label>
+                    ))}
+                    <small>La parte superior queda abierta. Cada espesor se mide hacia el interior.</small>
+                  </>
+                ) : (
+                  <>
+                    <label className="property-row">
+                      <span>Espesor radial</span>
+                      <input
+                        aria-label="Espesor radial para vaciado cilíndrico"
+                        type="number"
+                        min="0.1"
+                        step="0.1"
+                        value={wallThicknesses.left}
+                        onChange={(event) => setWallThicknesses((current) => ({ ...current, left: event.target.value }))}
+                      />
+                    </label>
+                    <small>El cilindro se convierte en un tubo con agujero pasante.</small>
+                  </>
+                )}
+                <button className="primary-button" onClick={handleHollow}>
                   Vaciar pieza
                 </button>
-                <small>El cubo queda abierto por arriba; el cilindro queda como tubo hueco.</small>
               </div>
               {advanced && (
                 <div className="advanced-note">
