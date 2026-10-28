@@ -283,3 +283,43 @@ export async function calculateHeightCut(object: ProjectObject, height: number):
   };
   return calculateBoolean([{ ...object, booleanRole: "solid" }, cutter], "subtract");
 }
+
+
+/**
+ * Returns the closed upper portion of a mesh cut at an absolute world-space Y height.
+ */
+export async function calculateHeightUpper(object: ProjectObject, height: number): Promise<number[]> {
+  if (!Number.isFinite(height)) throw new Error("La altura de corte debe ser un número válido.");
+  const geometry = createWorldGeometry(object);
+  geometry.computeBoundingBox();
+  const bounds = geometry.boundingBox;
+  geometry.dispose();
+  if (!bounds) throw new Error("No se pudieron calcular los límites de la pieza.");
+  if (height <= bounds.min.y + 1e-5) throw new Error("La altura elegida dejaría la parte superior sin volumen.");
+  if (height >= bounds.max.y - 1e-5) throw new Error("La altura de corte debe estar por debajo de la parte superior de la pieza.");
+  const margin = Math.max(bounds.max.x - bounds.min.x, bounds.max.y - bounds.min.y, bounds.max.z - bounds.min.z, 10) + 10;
+  const cutter: ProjectObject = {
+    id: crypto.randomUUID(), name: "Plano de corte inferior", kind: "box", booleanRole: "cutter",
+    position: {
+      x: (bounds.min.x + bounds.max.x) / 2,
+      y: (bounds.min.y + height - margin) / 2,
+      z: (bounds.min.z + bounds.max.z) / 2
+    },
+    dimensions: {
+      x: bounds.max.x - bounds.min.x + margin * 2,
+      y: height - bounds.min.y + margin,
+      z: bounds.max.z - bounds.min.z + margin * 2
+    },
+    rotation: { x: 0, y: 0, z: 0 }
+  };
+  return calculateBoolean([{ ...object, booleanRole: "solid" }, cutter], "subtract");
+}
+
+/** Returns both independent closed solids produced by a horizontal height cut. */
+export async function calculateHeightSplit(object: ProjectObject, height: number): Promise<{ lower: number[]; upper: number[] }> {
+  const [lower, upper] = await Promise.all([
+    calculateHeightCut(object, height),
+    calculateHeightUpper(object, height)
+  ]);
+  return { lower, upper };
+}
