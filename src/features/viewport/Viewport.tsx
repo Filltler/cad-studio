@@ -18,6 +18,8 @@ export function Viewport() {
   const selectedId = useEditorStore((s) => s.selectedId);
   const selectObject = useEditorStore((s) => s.selectObject);
   const updateObject = useEditorStore((s) => s.updateObject);
+  const beginTransaction = useEditorStore((s) => s.beginTransaction);
+  const endTransaction = useEditorStore((s) => s.endTransaction);
   const [mode, setMode] = useState<TransformMode>("translate");
   const meshMap = useRef(new Map<string, THREE.Mesh>());
   const transformRef = useRef<TransformControls | null>(null);
@@ -88,6 +90,8 @@ export function Viewport() {
 
     transform.addEventListener("dragging-changed", (event) => {
       controls.enabled = !event.value;
+      if (event.value) beginTransaction();
+      else endTransaction();
     });
     transform.addEventListener("objectChange", () => {
       const mesh = transform.object as THREE.Mesh | undefined;
@@ -159,6 +163,7 @@ export function Viewport() {
           if (raycaster.ray.intersectPlane(plane, startPoint)) {
             const object = objectsRef.current.find((item) => item.id === selected.userData.objectId);
             if (object) {
+              beginTransaction();
               dragState.current = {
                 objectId: object.id,
                 axis,
@@ -202,6 +207,7 @@ export function Viewport() {
       if (dragState.current) {
         dragState.current = null;
         controls.enabled = true;
+        endTransaction();
       }
     };
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
