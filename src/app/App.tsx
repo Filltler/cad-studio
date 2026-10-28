@@ -4,7 +4,7 @@ import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
 import { Viewport } from "../features/viewport/Viewport";
 import { useEditorStore } from "../features/editor/editorStore";
 import { listProjects, loadProject, saveProject } from "../services/storage/projectStorage";
-import { calculateBoolean, calculateHollow, type BooleanOperation } from "../services/booleanOperations";
+import { calculateBoolean, calculateHeightCut, calculateHollow, type BooleanOperation } from "../services/booleanOperations";
 
 export function App() {
   const [advanced, setAdvanced] = useState(false);
@@ -13,6 +13,10 @@ export function App() {
   const [notice, setNotice] = useState("MiCAD · herramientas CAD en desarrollo");
   const [wallThicknesses, setWallThicknesses] = useState({ left: "2", right: "2", front: "2", back: "2", bottom: "2" });
   const [numericDraft, setNumericDraft] = useState<Record<string, string>>({});
+  const [cutEnabled, setCutEnabled] = useState(false);
+  const [cutHeight, setCutHeight] = useState("17");
+  const [cutPreview, setCutPreview] = useState<{ objectId: string; vertices: number[] } | null>(null);
+  const [cutBusy, setCutBusy] = useState(false);
   const [projectId, setProjectId] = useState("local-project");
   const [projectName, setProjectName] = useState("Mi primer proyecto");
   const [projects, setProjects] = useState<Array<{ id: string; name: string; updatedAt: string }>>([]);
@@ -37,6 +41,30 @@ export function App() {
       rotationX: String(selected.rotation.x), rotationY: String(selected.rotation.y), rotationZ: String(selected.rotation.z)
     });
   }, [selectedId]);
+
+  useEffect(() => {
+    if (!cutEnabled || !selected || !cutHeight.trim() || !Number.isFinite(Number(cutHeight))) {
+      setCutPreview(null);
+      setCutBusy(false);
+      return;
+    }
+    let active = true;
+    const timer = window.setTimeout(() => {
+      setCutBusy(true);
+      calculateHeightCut(selected, Number(cutHeight))
+        .then((vertices) => {
+          if (active) setCutPreview({ objectId: selected.id, vertices });
+        })
+        .catch((error) => {
+          if (active) {
+            setCutPreview(null);
+            setNotice(error instanceof Error ? error.message : "No se pudo calcular la vista previa del corte.");
+          }
+        })
+        .finally(() => { if (active) setCutBusy(false); });
+    }, 250);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [cutEnabled, selectedId, cutHeight, objects]);
 
   const refreshProjects = useCallback(async () => {
     const saved = await listProjects();
@@ -118,6 +146,24 @@ export function App() {
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "No se pudo completar la operación booleana.");
     }
+  }
+
+  function cancelHeightCut() {
+    setCutEnabled(false);
+    setCutPreview(null);
+    setCutBusy(false);
+    setNotice("Vista previa de corte cancelada; la pieza original no se modificó.");
+  }
+
+  function confirmHeightCut() {
+    if (!selected || !cutPreview || cutPreview.objectId !== selected.id || cutBusy) {
+      setNotice("Esperá a que la vista previa del corte esté lista.");
+      return;
+    }
+    applyBooleanResult([selected.id], "Corte por altura · " + selected.name, cutPreview.vertices);
+    setCutEnabled(false);
+    setCutPreview(null);
+    setNotice("Corte confirmado a Y = " + Number(cutHeight).toFixed(3) + " mm. Podés deshacerlo.");
   }
 
   async function handleHollow() {
@@ -378,7 +424,7 @@ export function App() {
               <span className="subtle-chip">Cuadrícula activa</span>
             </div>
           </div>
-          <Viewport multiSelectMode={viewportMultiSelect} onObjectSelect={handleViewportObjectSelect} />
+          <Viewport multiSelectMode={viewportMultiSelect} onObjectSelect={handleViewportObjectSelect} preview={cutPreview} />
           <div className="viewport-bottom">
             <span>Arrastrá para orbitar · Rueda para zoom</span>
             <span>Unidades: milímetros</span>
@@ -439,6 +485,24 @@ export function App() {
               <div className="property-section">
                 <button className="primary-button" onClick={confirmNumericChanges}>Confirmar cambios</button>
                 <button className="secondary-button" onClick={cancelNumericChanges}>Cancelar cambios</button>
+              </div>
+              <div className="property-section height-cut-section">
+                <div className="property-title">Corte por altura <span>Y · mm</span></div>
+                <small>Corta con un plano horizontal en una coordenada Y absoluta y conserva la parte inferior. El original no cambia hasta confirmar.</small>
+                {!cutEnabled ? (
+                  <button className="secondary-button" onClick={() => setCutEnabled(true)}>Activar vista previa</button>
+                ) : (
+                  <>
+                    <label className="property-row">
+                      <span>Altura exacta</span>
+                      <input aria-label="Altura absoluta del corte en Y" type="number" min="0" step="0.01" value={cutHeight} onChange={(event) => setCutHeight(event.target.value)} />
+                    </label>
+                    <input aria-label="Deslizador de altura del corte" type="range" min="0" max="100" step="0.05" value={cutHeight === "" || !Number.isFinite(Number(cutHeight)) ? 0 : Math.min(100, Math.max(0, Number(cutHeight)))} onChange={(event) => setCutHeight(event.target.value)} />
+                    <small>{cutBusy ? "Calculando vista previa…" : cutPreview ? "Vista previa lista. La pieza original sigue intacta." : "Mové el deslizador para actualizar la vista previa."}</small>
+                    <button className="primary-button" disabled={!cutPreview || cutBusy} onClick={confirmHeightCut}>Confirmar corte</button>
+                    <button className="secondary-button" onClick={cancelHeightCut}>Cancelar corte</button>
+                  </>
+                )}
               </div>
               <div className="property-section">
                 <div className="property-title">Vaciado <span>mm</span></div>

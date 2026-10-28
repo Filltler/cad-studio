@@ -5,7 +5,7 @@ import { TransformControls } from "three/examples/jsm/controls/TransformControls
 import { useEditorStore } from "../editor/editorStore";
 
 type TransformMode = "translate" | "rotate" | "scale";
-type ViewportProps = { multiSelectMode?: boolean; onObjectSelect?: (id: string | null, additive: boolean) => void };
+type ViewportProps = { multiSelectMode?: boolean; onObjectSelect?: (id: string | null, additive: boolean) => void; preview?: { objectId: string; vertices: number[] } | null };
 
 const modeLabels: Record<TransformMode, string> = {
   translate: "Mover",
@@ -13,7 +13,7 @@ const modeLabels: Record<TransformMode, string> = {
   scale: "Escalar"
 };
 
-export function Viewport({ multiSelectMode = false, onObjectSelect }: ViewportProps) {
+export function Viewport({ multiSelectMode = false, onObjectSelect, preview = null }: ViewportProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const objects = useEditorStore((s) => s.objects);
   const selectedId = useEditorStore((s) => s.selectedId);
@@ -23,6 +23,7 @@ export function Viewport({ multiSelectMode = false, onObjectSelect }: ViewportPr
   const endTransaction = useEditorStore((s) => s.endTransaction);
   const [mode, setMode] = useState<TransformMode>("translate");
   const meshMap = useRef(new Map<string, THREE.Mesh>());
+  const previewMeshRef = useRef<THREE.Mesh | null>(null);
   const transformRef = useRef<TransformControls | null>(null);
   const orbitRef = useRef<OrbitControls | null>(null);
   const objectsRef = useRef(objects);
@@ -254,6 +255,12 @@ export function Viewport({ multiSelectMode = false, onObjectSelect }: ViewportPr
         else material.dispose();
       });
       meshMap.current.clear();
+      if (previewMeshRef.current) {
+        scene.remove(previewMeshRef.current);
+        previewMeshRef.current.geometry.dispose();
+        (previewMeshRef.current.material as THREE.Material).dispose();
+        previewMeshRef.current = null;
+      }
       delete (host as HTMLDivElement & { __cadScene?: THREE.Scene }).__cadScene;
       renderer.dispose();
       renderer.domElement.remove();
@@ -348,13 +355,31 @@ export function Viewport({ multiSelectMode = false, onObjectSelect }: ViewportPr
     }
 
     const selectedMesh = selectedId ? existing.get(selectedId) : undefined;
-    if (selectedMesh && modeRef.current !== "scale") transformRef.current?.attach(selectedMesh);
+    existing.forEach((mesh, id) => { mesh.visible = !(preview && id === preview.objectId); });
+    if (preview) {
+      let previewMesh = previewMeshRef.current;
+      if (!previewMesh) {
+        previewMesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshStandardMaterial({ color: "#22d3ee", transparent: true, opacity: 0.92, side: THREE.DoubleSide }));
+        previewMesh.userData.heightCutPreview = true;
+        previewMeshRef.current = previewMesh;
+        scene.add(previewMesh);
+      }
+      previewMesh.geometry.dispose();
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(preview.vertices, 3));
+      geometry.computeVertexNormals();
+      previewMesh.geometry = geometry;
+      previewMesh.visible = true;
+    } else if (previewMeshRef.current) {
+      previewMeshRef.current.visible = false;
+    }
+    if (selectedMesh && modeRef.current !== "scale" && !preview) transformRef.current?.attach(selectedMesh);
     else transformRef.current?.detach();
 
     dimensionHandles.current.forEach((handle) => {
       handle.visible = Boolean(selectedMesh && modeRef.current === "scale");
     });
-    if (selectedMesh) {
+    if (selectedMesh && !preview) {
       selectedMesh.updateMatrixWorld(true);
       dimensionHandles.current.forEach((handle) => {
         const axis = handle.userData.axis as "x" | "y" | "z";
@@ -367,7 +392,7 @@ export function Viewport({ multiSelectMode = false, onObjectSelect }: ViewportPr
         handle.position.copy(selectedMesh.localToWorld(localPoint));
       });
     }
-  }, [objects, selectedId]);
+  }, [objects, selectedId, preview]);
 
   return (
     <div className="viewport-stage">
