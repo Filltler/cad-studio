@@ -60,18 +60,22 @@ export function calculateBoolean(objects: ProjectObject[], operation: BooleanOpe
     // CSG evaluation returns vertices in the coordinate system of brush A and
     // also assigns A's world transform to the result brush. Convert the result
     // back to world coordinates exactly once before storing a transform-free mesh.
-    // GeometryBuilder writes transformed world-space vertices into the CSG result.
-    // Preserve only triangles inside drawRange; the index buffer may reserve extra capacity.
-    const activeIndexCount = result.geometry.drawRange.count;
-    const geometry = result.geometry.index
-      ? result.geometry.toNonIndexed()
-      : result.geometry.clone();
-    const position = geometry.getAttribute("position");
-    const activeVertexCount = result.geometry.index
-      ? activeIndexCount
-      : Math.min(position.count, activeIndexCount === Infinity ? position.count : activeIndexCount);
-    const activeLength = activeVertexCount * position.itemSize;
-    const vertices = Array.from(position.array as ArrayLike<number>).slice(0, activeLength);
+    // Read exactly the active index range and expand each triangle explicitly.
+    // Avoid BufferGeometry.toNonIndexed(), which can expand unused index-buffer capacity.
+    const position = result.geometry.getAttribute("position");
+    const index = result.geometry.index;
+    const drawStart = result.geometry.drawRange.start;
+    const drawCount = result.geometry.drawRange.count;
+    const availableCount = index ? index.count : position.count;
+    const activeCount = Math.min(
+      drawCount === Infinity ? availableCount : drawCount,
+      availableCount - drawStart
+    );
+    const vertices: number[] = [];
+    for (let i = drawStart; i < drawStart + activeCount; i++) {
+      const vertexIndex = index ? index.getX(i) : i;
+      vertices.push(position.getX(vertexIndex), position.getY(vertexIndex), position.getZ(vertexIndex));
+    }
     geometry.dispose();
     if (vertices.length < 9) throw new Error("La operación no produjo un sólido válido. Revisá que las piezas se superpongan.");
     return vertices;
