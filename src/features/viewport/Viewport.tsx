@@ -103,6 +103,15 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, preview = nu
       const mesh = transform.object as THREE.Mesh | undefined;
       const id = mesh?.userData.objectId as string | undefined;
       if (!mesh || !id) return;
+      const source = objectsRef.current.find((object) => object.id === id);
+      if (source?.kind === "custom") {
+        // Custom boolean meshes store their vertices in world coordinates.
+        // Apply translation as an object transform without overwriting their real dimensions.
+        updateObject(id, {
+          position: { x: mesh.position.x, y: mesh.position.y, z: mesh.position.z }
+        });
+        return;
+      }
       updateObject(id, {
         position: { x: mesh.position.x, y: mesh.position.y, z: mesh.position.z },
         dimensions: {
@@ -339,7 +348,9 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, preview = nu
         scene.add(mesh);
       }
       if (object.kind === "custom") {
-        mesh.position.set(0, 0, 0);
+        // The custom mesh vertices are already in world-coordinate units; translation
+        // is supported, while scale/rotation remain unapplied until local-space storage exists.
+        mesh.position.set(object.position.x, object.position.y, object.position.z);
         mesh.scale.set(1, 1, 1);
         mesh.rotation.set(0, 0, 0);
       } else {
