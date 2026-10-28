@@ -1,4 +1,6 @@
 import { useState } from "react";
+import * as THREE from "three";
+import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
 import { Viewport } from "../features/viewport/Viewport";
 import { useEditorStore } from "../features/editor/editorStore";
 import { saveProject } from "../services/storage/projectStorage";
@@ -29,6 +31,52 @@ export function App() {
     }
   }
 
+  function handleExportSTL() {
+    if (objects.length === 0) {
+      setNotice("Agregá al menos una pieza antes de exportar.");
+      return;
+    }
+
+    const scene = new THREE.Scene();
+    const geometries: THREE.BufferGeometry[] = [];
+    for (const object of objects) {
+      const geometry = object.kind === "box"
+        ? new THREE.BoxGeometry(1, 1, 1)
+        : object.kind === "cylinder"
+          ? new THREE.CylinderGeometry(0.5, 0.5, 1, 48)
+          : new THREE.SphereGeometry(0.5, 32, 24);
+      geometries.push(geometry);
+      const mesh = new THREE.Mesh(geometry);
+      mesh.position.set(object.position.x, object.position.y, object.position.z);
+      mesh.scale.set(object.dimensions.x, object.dimensions.y, object.dimensions.z);
+      mesh.rotation.set(
+        THREE.MathUtils.degToRad(object.rotation?.x ?? 0),
+        THREE.MathUtils.degToRad(object.rotation?.y ?? 0),
+        THREE.MathUtils.degToRad(object.rotation?.z ?? 0)
+      );
+      scene.add(mesh);
+    }
+
+    try {
+      scene.updateMatrixWorld(true);
+      const exporter = new STLExporter();
+      const result = exporter.parse(scene, { binary: true });
+      const buffer = result.buffer.slice(result.byteOffset, result.byteOffset + result.byteLength) as ArrayBuffer;
+      const blob = new Blob([buffer], { type: "model/stl" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "micad-modelo.stl";
+      link.click();
+      URL.revokeObjectURL(url);
+      setNotice("Archivo STL exportado. Las piezas se guardaron juntas en milímetros.");
+    } catch {
+      setNotice("No se pudo exportar el STL.");
+    } finally {
+      geometries.forEach((geometry) => geometry.dispose());
+    }
+  }
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -42,6 +90,7 @@ export function App() {
         <button className="secondary-button" onClick={() => setAdvanced((v) => !v)}>
           {advanced ? "Modo sencillo" : "Herramientas avanzadas"}
         </button>
+        <button className="secondary-button" onClick={handleExportSTL}>Exportar STL</button>
         <button className="primary-button" onClick={handleSave}>Guardar proyecto</button>
       </header>
 
