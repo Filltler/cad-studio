@@ -55,7 +55,11 @@ export function calculateBoolean(objects: ProjectObject[], operation: BooleanOpe
       }
     }
     result.updateMatrixWorld(true);
-    const geometry = result.geometry.clone();
+    // CSG results commonly use indexed geometry. Flatten it so every
+    // triangle has its own three consecutive vertices before storing/exporting.
+    const geometry = result.geometry.index
+      ? result.geometry.toNonIndexed()
+      : result.geometry.clone();
     geometry.applyMatrix4(result.matrixWorld);
     const position = geometry.getAttribute("position");
     const vertices = Array.from(position.array as ArrayLike<number>);
