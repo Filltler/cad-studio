@@ -60,14 +60,17 @@ export function calculateBoolean(objects: ProjectObject[], operation: BooleanOpe
     // CSG evaluation returns vertices in the coordinate system of brush A and
     // also assigns A's world transform to the result brush. Convert the result
     // back to world coordinates exactly once before storing a transform-free mesh.
+    // GeometryBuilder writes transformed world-space vertices into the CSG result.
+    // Preserve only triangles inside drawRange; the index buffer may reserve extra capacity.
+    const activeIndexCount = result.geometry.drawRange.count;
     const geometry = result.geometry.index
       ? result.geometry.toNonIndexed()
       : result.geometry.clone();
-    geometry.applyMatrix4(result.matrixWorld);
     const position = geometry.getAttribute("position");
-    // BufferGeometry attributes may retain unused capacity after CSG generation.
-    // Read only the active vertex range, not the entire backing array.
-    const activeLength = position.count * position.itemSize;
+    const activeVertexCount = result.geometry.index
+      ? activeIndexCount
+      : Math.min(position.count, activeIndexCount === Infinity ? position.count : activeIndexCount);
+    const activeLength = activeVertexCount * position.itemSize;
     const vertices = Array.from(position.array as ArrayLike<number>).slice(0, activeLength);
     geometry.dispose();
     if (vertices.length < 9) throw new Error("La operación no produjo un sólido válido. Revisá que las piezas se superpongan.");
