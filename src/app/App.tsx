@@ -4,13 +4,15 @@ import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
 import { Viewport } from "../features/viewport/Viewport";
 import { useEditorStore } from "../features/editor/editorStore";
 import { saveProject } from "../services/storage/projectStorage";
-import { calculateBoolean, type BooleanOperation } from "../services/booleanOperations";
+import { calculateBoolean, calculateHollow, type BooleanOperation } from "../services/booleanOperations";
 
 export function App() {
   const [advanced, setAdvanced] = useState(false);
   const [booleanSelection, setBooleanSelection] = useState<string[]>([]);
   const [viewportMultiSelect, setViewportMultiSelect] = useState(false);
   const [notice, setNotice] = useState("MiCAD · herramientas CAD en desarrollo");
+  const [wallThicknesses, setWallThicknesses] = useState({ left: "2", right: "2", front: "2", back: "2", bottom: "2" });
+  const [numericDraft, setNumericDraft] = useState<Record<string, string>>({});
   const objects = useEditorStore((s) => s.objects);
   const selectedId = useEditorStore((s) => s.selectedId);
   const addPrimitive = useEditorStore((s) => s.addPrimitive);
@@ -22,6 +24,14 @@ export function App() {
   const canUndo = useEditorStore((s) => s.past.length > 0);
   const canRedo = useEditorStore((s) => s.future.length > 0);
   const selected = objects.find((o) => o.id === selectedId);
+  useEffect(() => {
+    if (!selected) { setNumericDraft({}); return; }
+    setNumericDraft({
+      dimensionX: String(selected.dimensions.x), dimensionY: String(selected.dimensions.y), dimensionZ: String(selected.dimensions.z),
+      positionX: String(selected.position.x), positionY: String(selected.position.y), positionZ: String(selected.position.z),
+      rotationX: String(selected.rotation.x), rotationY: String(selected.rotation.y), rotationZ: String(selected.rotation.z)
+    });
+  }, [selectedId]);
 
   useEffect(() => {
     function handleHistoryShortcut(event: KeyboardEvent) {
@@ -78,6 +88,70 @@ export function App() {
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "No se pudo completar la operación booleana.");
     }
+  }
+
+  async function handleHollow() {
+    if (!selected) {
+      setNotice("Seleccioná un cubo o cilindro para vaciarlo.");
+      return;
+    }
+    if (selected.kind !== "box" && selected.kind !== "cylinder") {
+      setNotice("El vaciado está disponible por ahora para cubos y cilindros.");
+      return;
+    }
+    try {
+      setNotice("Generando cavidad y comprobando la malla…");
+      const parsedWalls = {
+        left: Number(wallThicknesses.left),
+        right: Number(wallThicknesses.right),
+        front: Number(wallThicknesses.front),
+        back: Number(wallThicknesses.back),
+        bottom: Number(wallThicknesses.bottom)
+      };
+      const activeValues = selected.kind === "cylinder" ? [parsedWalls.left] : Object.values(parsedWalls);
+      if (activeValues.some((value) => !Number.isFinite(value) || value <= 0)) {
+        setNotice("Ingresá espesores mayores que 0 mm en todos los campos.");
+        return;
+      }
+      const vertices = await calculateHollow(selected, selected.kind === "cylinder" ? parsedWalls.left : parsedWalls);
+      applyBooleanResult([selected.id], `Vaciado ${selected.name}`, vertices);
+      setBooleanSelection([]);
+      setNotice(selected.kind === "cylinder"
+        ? `Tubo generado con pared de ${parsedWalls.left} mm.`
+        : "Vaciado completado con espesores independientes.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No se pudo vaciar la pieza.");
+    }
+  }
+
+  function confirmNumericChanges() {
+    if (!selected) return;
+    const keys = ["dimensionX", "dimensionY", "dimensionZ", "positionX", "positionY", "positionZ", "rotationX", "rotationY", "rotationZ"];
+    if (keys.some((key) => !numericDraft[key]?.trim() || !Number.isFinite(Number(numericDraft[key])))) {
+      setNotice("Completá todos los campos numéricos antes de confirmar.");
+      return;
+    }
+    const dimensions = { x: Number(numericDraft.dimensionX), y: Number(numericDraft.dimensionY), z: Number(numericDraft.dimensionZ) };
+    if (Object.values(dimensions).some((value) => value <= 0)) {
+      setNotice("Las dimensiones deben ser mayores que 0 mm.");
+      return;
+    }
+    updateObject(selected.id, {
+      dimensions,
+      position: { x: Number(numericDraft.positionX), y: Number(numericDraft.positionY), z: Number(numericDraft.positionZ) },
+      rotation: { x: Number(numericDraft.rotationX), y: Number(numericDraft.rotationY), z: Number(numericDraft.rotationZ) }
+    });
+    setNotice("Cambios numéricos confirmados.");
+  }
+
+  function cancelNumericChanges() {
+    if (!selected) return;
+    setNumericDraft({
+      dimensionX: String(selected.dimensions.x), dimensionY: String(selected.dimensions.y), dimensionZ: String(selected.dimensions.z),
+      positionX: String(selected.position.x), positionY: String(selected.position.y), positionZ: String(selected.position.z),
+      rotationX: String(selected.rotation.x), rotationY: String(selected.rotation.y), rotationZ: String(selected.rotation.z)
+    });
+    setNotice("Se descartaron los cambios numéricos.");
   }
 
   async function handleSave() {
@@ -251,67 +325,82 @@ export function App() {
               </div>
               <div className="property-section">
                 <div className="property-title">Dimensiones <span>mm</span></div>
-                {(["x", "y", "z"] as const).map((axis) => (
-                  <label className="property-row" key={axis}>
+                {(["x", "y", "z"] as const).map((axis) => {
+                  const key = "dimension" + axis.toUpperCase();
+                  return <label className="property-row" key={axis}>
                     <span>{axis.toUpperCase()}</span>
-                    <input
-                      type="number"
-                      min="0.1"
-                      step="0.1"
-                      value={Number(selected.dimensions[axis].toFixed(2))}
-                      onChange={(event) => {
-                        const value = Number(event.target.value);
-                        if (Number.isFinite(value) && value > 0) {
-                          updateObject(selected.id, {
-                            dimensions: { ...selected.dimensions, [axis]: value }
-                          });
-                        }
-                      }}
-                    />
-                  </label>
-                ))}
+                    <input type="number" min="0.1" step="0.1" value={numericDraft[key] ?? ""} onChange={(event) => setNumericDraft((draft) => ({ ...draft, [key]: event.target.value }))} />
+                  </label>;
+                })}
               </div>
               <div className="property-section">
                 <div className="property-title">Posición <span>mm</span></div>
-                {(["x", "y", "z"] as const).map((axis) => (
-                  <label className="property-row" key={axis}>
+                {(["x", "y", "z"] as const).map((axis) => {
+                  const key = "position" + axis.toUpperCase();
+                  return <label className="property-row" key={axis}>
                     <span>{axis.toUpperCase()}</span>
-                    <input
-                      type="number"
-                      step="1"
-                      value={Number(selected.position[axis].toFixed(2))}
-                      onChange={(event) => {
-                        const value = Number(event.target.value);
-                        if (Number.isFinite(value)) {
-                          updateObject(selected.id, {
-                            position: { ...selected.position, [axis]: value }
-                          });
-                        }
-                      }}
-                    />
-                  </label>
-                ))}
+                    <input type="number" step="1" value={numericDraft[key] ?? ""} onChange={(event) => setNumericDraft((draft) => ({ ...draft, [key]: event.target.value }))} />
+                  </label>;
+                })}
               </div>
               <div className="property-section">
                 <div className="property-title">Rotación <span>grados</span></div>
-                {(["x", "y", "z"] as const).map((axis) => (
-                  <label className="property-row" key={axis}>
+                {(["x", "y", "z"] as const).map((axis) => {
+                  const key = "rotation" + axis.toUpperCase();
+                  return <label className="property-row" key={axis}>
                     <span>{axis.toUpperCase()}</span>
-                    <input
-                      type="number"
-                      step="15"
-                      value={Number((selected.rotation?.[axis] ?? 0).toFixed(2))}
-                      onChange={(event) => {
-                        const value = Number(event.target.value);
-                        if (Number.isFinite(value)) {
-                          updateObject(selected.id, {
-                            rotation: { ...(selected.rotation ?? { x: 0, y: 0, z: 0 }), [axis]: value }
-                          });
-                        }
-                      }}
-                    />
-                  </label>
-                ))}
+                    <input type="number" step="15" value={numericDraft[key] ?? ""} onChange={(event) => setNumericDraft((draft) => ({ ...draft, [key]: event.target.value }))} />
+                  </label>;
+                })}
+              </div>
+              <div className="property-section">
+                <button className="primary-button" onClick={confirmNumericChanges}>Confirmar cambios</button>
+                <button className="secondary-button" onClick={cancelNumericChanges}>Cancelar cambios</button>
+              </div>
+              <div className="property-section">
+                <div className="property-title">Vaciado <span>mm</span></div>
+                {selected.kind === "box" ? (
+                  <>
+                    {([
+                      ["left", "Izquierda"],
+                      ["right", "Derecha"],
+                      ["front", "Frontal"],
+                      ["back", "Trasera"],
+                      ["bottom", "Fondo / base"]
+                    ] as const).map(([side, label]) => (
+                      <label className="property-row" key={side}>
+                        <span>{label}</span>
+                        <input
+                          aria-label={`Espesor pared ${label}`}
+                          type="number"
+                          min="0.1"
+                          step="0.1"
+                          value={wallThicknesses[side]}
+                          onChange={(event) => setWallThicknesses((current) => ({ ...current, [side]: event.target.value }))}
+                        />
+                      </label>
+                    ))}
+                    <small>La parte superior queda abierta. Cada espesor se mide hacia el interior.</small>
+                  </>
+                ) : (
+                  <>
+                    <label className="property-row">
+                      <span>Espesor radial</span>
+                      <input
+                        aria-label="Espesor radial para vaciado cilíndrico"
+                        type="number"
+                        min="0.1"
+                        step="0.1"
+                        value={wallThicknesses.left}
+                        onChange={(event) => setWallThicknesses((current) => ({ ...current, left: event.target.value }))}
+                      />
+                    </label>
+                    <small>El cilindro se convierte en un tubo con agujero pasante.</small>
+                  </>
+                )}
+                <button className="primary-button" onClick={handleHollow}>
+                  Vaciar pieza
+                </button>
               </div>
               {advanced && (
                 <div className="advanced-note">

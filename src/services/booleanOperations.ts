@@ -143,3 +143,95 @@ export async function calculateBoolean(objects: ProjectObject[], operation: Bool
     geometries.forEach((geometry) => geometry.dispose());
   }
 }
+
+
+/**
+ * Creates a true hollow primitive by subtracting an inner cutter.
+ * Boxes become open-top containers; cylinders become tubes with a through-bore.
+ * Dimensions and positions are expressed in millimeters.
+ */
+export type HollowWallThickness = {
+  left: number;
+  right: number;
+  front: number;
+  back: number;
+  bottom: number;
+};
+
+/**
+ * Creates an open-top box with independently configurable wall thicknesses,
+ * or a cylindrical tube using the left value as radial wall thickness.
+ */
+export async function calculateHollow(
+  object: ProjectObject,
+  thickness: number | HollowWallThickness
+): Promise<number[]> {
+  if (object.kind !== "box" && object.kind !== "cylinder") {
+    throw new Error("El vaciado está disponible por ahora para cubos y cilindros.");
+  }
+
+  if (object.kind === "cylinder") {
+    const radialThickness = typeof thickness === "number" ? thickness : thickness.left;
+    if (!Number.isFinite(radialThickness) || radialThickness <= 0) {
+      throw new Error("El espesor debe ser mayor que 0 mm.");
+    }
+    if (radialThickness * 2 >= Math.min(object.dimensions.x, object.dimensions.z)) {
+      throw new Error("El espesor es demasiado grande para el diámetro del cilindro.");
+    }
+    const cutter: ProjectObject = {
+      id: crypto.randomUUID(),
+      name: "Cortante interior",
+      kind: "cylinder",
+      booleanRole: "cutter",
+      position: { ...object.position },
+      dimensions: {
+        x: object.dimensions.x - radialThickness * 2,
+        y: object.dimensions.y + 0.02,
+        z: object.dimensions.z - radialThickness * 2
+      },
+      rotation: { ...object.rotation }
+    };
+    return calculateBoolean([object, cutter], "subtract");
+  }
+
+  const walls: HollowWallThickness = typeof thickness === "number"
+    ? { left: thickness, right: thickness, front: thickness, back: thickness, bottom: thickness }
+    : thickness;
+  const values = Object.values(walls);
+  if (values.some((value) => !Number.isFinite(value) || value <= 0)) {
+    throw new Error("Todos los espesores deben ser mayores que 0 mm.");
+  }
+  const innerX = object.dimensions.x - walls.left - walls.right;
+  const innerZ = object.dimensions.z - walls.front - walls.back;
+  const innerY = object.dimensions.y - walls.bottom;
+  if (innerX <= 0 || innerZ <= 0 || innerY <= 0) {
+    throw new Error("Los espesores elegidos no caben dentro de las dimensiones de la pieza.");
+  }
+
+  const localOffset = new THREE.Vector3(
+    (walls.left - walls.right) / 2,
+    walls.bottom / 2 + 0.01,
+    (walls.front - walls.back) / 2
+  );
+  const rotation = new THREE.Euler(
+    THREE.MathUtils.degToRad(object.rotation.x),
+    THREE.MathUtils.degToRad(object.rotation.y),
+    THREE.MathUtils.degToRad(object.rotation.z)
+  );
+  localOffset.applyEuler(rotation);
+
+  const cutter: ProjectObject = {
+    id: crypto.randomUUID(),
+    name: "Cortante interior",
+    kind: "box",
+    booleanRole: "cutter",
+    position: {
+      x: object.position.x + localOffset.x,
+      y: object.position.y + localOffset.y,
+      z: object.position.z + localOffset.z
+    },
+    dimensions: { x: innerX, y: innerY + 0.02, z: innerZ },
+    rotation: { ...object.rotation }
+  };
+  return calculateBoolean([object, cutter], "subtract");
+}

@@ -83,7 +83,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   applyBooleanResult: (objectIds, name, vertices) => set((state) => {
     const history = transactionStart ? { past: state.past, future: state.future } : { past: [...state.past, cloneObjects(state.objects)].slice(-100), future: [] };
     const selected = state.objects.filter((object) => objectIds.includes(object.id));
-    if (selected.length < 2 || vertices.length < 9) return state;
+    if (selected.length < 1 || vertices.length < 9) return state;
     const xs = vertices.filter((_, index) => index % 3 === 0);
     const ys = vertices.filter((_, index) => index % 3 === 1);
     const zs = vertices.filter((_, index) => index % 3 === 2);
