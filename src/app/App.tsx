@@ -22,14 +22,15 @@ export function App() {
     setBooleanSelection((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   }
 
-  function handleBoolean(operation: BooleanOperation) {
+  async function handleBoolean(operation: BooleanOperation) {
     const chosen = objects.filter((object) => booleanSelection.includes(object.id));
     if (chosen.length < 2) {
       setNotice("Marcá al menos dos piezas para realizar la operación.");
       return;
     }
     try {
-      const vertices = calculateBoolean(chosen, operation);
+      setNotice("Calculando operación booleana…");
+      const vertices = await calculateBoolean(chosen, operation);
       const name = operation === "union" ? "Unión" : operation === "subtract" ? "Diferencia" : "Intersección";
       applyBooleanResult(chosen.map((object) => object.id), `Resultado ${name}`, vertices);
       setBooleanSelection([]);
