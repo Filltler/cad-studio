@@ -24,6 +24,7 @@ export function App() {
   const selectedId = useEditorStore((s) => s.selectedId);
   const addPrimitive = useEditorStore((s) => s.addPrimitive);
   const selectObject = useEditorStore((s) => s.selectObject);
+  const deleteObjects = useEditorStore((s) => s.deleteObjects);
   const updateObject = useEditorStore((s) => s.updateObject);
   const applyBooleanResult = useEditorStore((s) => s.applyBooleanResult);
   const loadProjectObjects = useEditorStore((s) => s.loadProjectObjects);
@@ -147,6 +148,8 @@ export function App() {
       setNotice(error instanceof Error ? error.message : "No se pudo completar la operación booleana.");
     }
   }
+
+  function handleDeleteObjects() { if (!selectedId) { setNotice("Seleccioná un objeto para eliminar."); return; } deleteObjects([selectedId]); setBooleanSelection((current) => current.filter((id) => id !== selectedId)); setCutEnabled(false); setCutPreview(null); setNotice("Objeto eliminado. Podés deshacerlo."); }
 
   function cancelHeightCut() {
     setCutEnabled(false);
@@ -440,6 +443,8 @@ export function App() {
                 <div><b>{selected.name}</b><small>{selected.kind === "custom" ? "SÓLIDO RESULTANTE" : selected.kind.toUpperCase()}</small></div>
               </div>
               <div className="property-section">
+                <div className="property-title">Objeto</div>
+                <button className="danger-button" onClick={handleDeleteObjects}>Eliminar objeto</button>
                 <div className="property-title">Apariencia</div>
                 <label className="property-row">
                   <span>Color del objeto</span>
