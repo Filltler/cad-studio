@@ -14,7 +14,8 @@ type EditorState = {
   selectObject: (id: string | null) => void;
   deleteObjects: (ids: string[]) => void;
   updateObject: (id: string, patch: Partial<Pick<ProjectObject, "position" | "dimensions" | "rotation" | "booleanRole" | "color">>) => void;
-  applyBooleanResult: (objectIds: string[], name: string, vertices: number[]) => void;\n  applyHeightSplitResult: (objectId: string, name: string, lowerVertices: number[], upperVertices: number[]) => void;
+  applyBooleanResult: (objectIds: string[], name: string, vertices: number[]) => void; 
+  applyHeightSplitResult: (objectId: string, name: string, lowerVertices: number[], upperVertices: number[]) => void;
   loadProjectObjects: (objects: ProjectObject[]) => void;
 };
 
