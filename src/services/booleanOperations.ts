@@ -89,16 +89,32 @@ export async function calculateBoolean(objects: ProjectObject[], operation: Bool
       solids.push(new wasm.Manifold(mesh));
     }
 
-    result = solids[0];
-    for (let i = 1; i < solids.length; i++) {
-      const next = solids[i];
-      const combined = operation === "union"
-        ? result.add(next)
-        : operation === "subtract"
-          ? result.subtract(next)
-          : result.intersect(next);
-      if (result !== solids[0]) result.delete();
-      result = combined;
+    if (operation === "subtract") {
+      const targetIndices = objects.map((object, index) => ({ object, index })).filter(({ object }) => object.booleanRole !== "cutter").map(({ index }) => index);
+      const cutterIndices = objects.map((object, index) => ({ object, index })).filter(({ object }) => object.booleanRole === "cutter").map(({ index }) => index);
+      if (targetIndices.length === 0 || cutterIndices.length === 0) {
+        throw new Error("Para Restar, seleccioná al menos un Sólido y una pieza Cortante.");
+      }
+      result = solids[targetIndices[0]];
+      for (const index of targetIndices.slice(1)) {
+        const combined = result.add(solids[index]);
+        if (!solids.includes(result)) result.delete();
+        result = combined;
+      }
+      for (const index of cutterIndices) {
+        const combined = result.subtract(solids[index]);
+        if (!solids.includes(result)) result.delete();
+        result = combined;
+      }
+    } else {
+      result = solids[0];
+      for (let i = 1; i < solids.length; i++) {
+        const combined = operation === "union"
+          ? result.add(solids[i])
+          : result.intersect(solids[i]);
+        if (!solids.includes(result)) result.delete();
+        result = combined;
+      }
     }
 
     const status = result.status();
