@@ -3,7 +3,7 @@ import * as THREE from "three";
 import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
 import { Viewport } from "../features/viewport/Viewport";
 import { useEditorStore } from "../features/editor/editorStore";
-import { loadProject, saveProject } from "../services/storage/projectStorage";
+import { listProjects, loadProject, saveProject } from "../services/storage/projectStorage";
 import { calculateBoolean, calculateHollow, type BooleanOperation } from "../services/booleanOperations";
 
 export function App() {
@@ -13,6 +13,9 @@ export function App() {
   const [notice, setNotice] = useState("MiCAD · herramientas CAD en desarrollo");
   const [wallThicknesses, setWallThicknesses] = useState({ left: "2", right: "2", front: "2", back: "2", bottom: "2" });
   const [numericDraft, setNumericDraft] = useState<Record<string, string>>({});
+  const [projectId, setProjectId] = useState("local-project");
+  const [projectName, setProjectName] = useState("Mi primer proyecto");
+  const [projects, setProjects] = useState<Array<{ id: string; name: string; updatedAt: string }>>([]);
   const objects = useEditorStore((s) => s.objects);
   const selectedId = useEditorStore((s) => s.selectedId);
   const addPrimitive = useEditorStore((s) => s.addPrimitive);
@@ -34,17 +37,28 @@ export function App() {
     });
   }, [selectedId]);
 
+  const refreshProjects = useCallback(async () => {
+    const saved = await listProjects();
+    setProjects(saved.map(({ id, name, updatedAt }) => ({ id, name, updatedAt })).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+    return saved;
+  }, []);
+
   useEffect(() => {
     let active = true;
-    loadProject("local-project")
-      .then((project) => {
-        if (!active || !project) return;
-        loadProjectObjects(project.objects);
-        setNotice("Proyecto guardado cargado.");
+    listProjects()
+      .then((saved) => {
+        if (!active) return;
+        const ordered = [...saved].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+        setProjects(ordered.map(({ id, name, updatedAt }) => ({ id, name, updatedAt })));
+        const project = ordered[0];
+        if (project) {
+          loadProjectObjects(project.objects);
+          setProjectId(project.id);
+          setProjectName(project.name);
+          setNotice("Proyecto guardado cargado.");
+        }
       })
-      .catch(() => {
-        if (active) setNotice("No se pudo cargar el proyecto guardado.");
-      });
+      .catch(() => { if (active) setNotice("No se pudieron cargar los proyectos guardados."); });
     return () => { active = false; };
   }, [loadProjectObjects]);
 
