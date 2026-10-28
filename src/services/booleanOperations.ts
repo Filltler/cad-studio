@@ -147,7 +147,7 @@ export async function calculateBoolean(objects: ProjectObject[], operation: Bool
 
 /**
  * Creates a true hollow primitive by subtracting an inner cutter.
- * Boxes become open-top containers; cylinders become tubes with a through-bore.
+ * Boxes become open-top containers; cylinders become tubes with a through-bore; spheres become closed hollow shells.
  * Dimensions and positions are expressed in millimeters.
  */
 export type HollowWallThickness = {
@@ -166,8 +166,21 @@ export async function calculateHollow(
   object: ProjectObject,
   thickness: number | HollowWallThickness
 ): Promise<number[]> {
-  if (object.kind !== "box" && object.kind !== "cylinder") {
-    throw new Error("El vaciado está disponible por ahora para cubos y cilindros.");
+  if (object.kind === "sphere") {
+    const wallThickness = typeof thickness === "number" ? thickness : thickness.left;
+    if (!Number.isFinite(wallThickness) || wallThickness <= 0) {
+      throw new Error("El espesor debe ser mayor que 0 mm.");
+    }
+    if (wallThickness * 2 >= Math.min(object.dimensions.x, object.dimensions.y, object.dimensions.z)) {
+      throw new Error("El espesor es demasiado grande para el tamaño de la esfera.");
+    }
+    const cutter: ProjectObject = {
+      id: crypto.randomUUID(), name: "Cortante interior", kind: "sphere", booleanRole: "cutter",
+      position: { ...object.position },
+      dimensions: { x: object.dimensions.x - wallThickness * 2, y: object.dimensions.y - wallThickness * 2, z: object.dimensions.z - wallThickness * 2 },
+      rotation: { ...object.rotation }
+    };
+    return calculateBoolean([object, cutter], "subtract");
   }
 
   if (object.kind === "cylinder") {
