@@ -16,7 +16,7 @@
     "three": "^0.179.1",
     "zod": "^4.1.5",
     "zustand": "^5.0.8",
-    "three-bvh-csg": "^0.0.17"
+    "manifold-3d": "^3.5.4"
   },
   "devDependencies": {
     "@types/react": "^19.1.12",
