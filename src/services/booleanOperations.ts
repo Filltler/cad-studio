@@ -4,6 +4,11 @@ import type { ProjectObject } from "../domain/project";
 
 export type BooleanOperation = "union" | "subtract" | "intersect";
 
+function disposeMaterial(material: THREE.Material | THREE.Material[]) {
+  if (Array.isArray(material)) material.forEach((item) => item.dispose());
+  else material.dispose();
+}
+
 function createGeometry(object: ProjectObject): THREE.BufferGeometry {
   if (object.kind === "box") return new THREE.BoxGeometry(1, 1, 1);
   if (object.kind === "cylinder") return new THREE.CylinderGeometry(0.5, 0.5, 1, 64);
@@ -42,11 +47,11 @@ export function calculateBoolean(objects: ProjectObject[], operation: BooleanOpe
         const op = operation === "union" ? ADDITION : operation === "subtract" ? SUBTRACTION : INTERSECTION;
         const combined = evaluator.evaluate(result, next, op);
         result.geometry.dispose();
-        result.material.dispose();
+        disposeMaterial(result.material);
         result = combined;
       } finally {
         next.geometry.dispose();
-        next.material.dispose();
+        disposeMaterial(next.material);
       }
     }
     result.updateMatrixWorld(true);
