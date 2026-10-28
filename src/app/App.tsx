@@ -3,7 +3,7 @@ import * as THREE from "three";
 import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
 import { Viewport } from "../features/viewport/Viewport";
 import { useEditorStore } from "../features/editor/editorStore";
-import { saveProject } from "../services/storage/projectStorage";
+import { loadProject, saveProject } from "../services/storage/projectStorage";
 import { calculateBoolean, calculateHollow, type BooleanOperation } from "../services/booleanOperations";
 
 export function App() {
@@ -19,6 +19,7 @@ export function App() {
   const selectObject = useEditorStore((s) => s.selectObject);
   const updateObject = useEditorStore((s) => s.updateObject);
   const applyBooleanResult = useEditorStore((s) => s.applyBooleanResult);
+  const loadProjectObjects = useEditorStore((s) => s.loadProjectObjects);
   const undo = useEditorStore((s) => s.undo);
   const redo = useEditorStore((s) => s.redo);
   const canUndo = useEditorStore((s) => s.past.length > 0);
@@ -32,6 +33,20 @@ export function App() {
       rotationX: String(selected.rotation.x), rotationY: String(selected.rotation.y), rotationZ: String(selected.rotation.z)
     });
   }, [selectedId]);
+
+  useEffect(() => {
+    let active = true;
+    loadProject("local-project")
+      .then((project) => {
+        if (!active || !project) return;
+        loadProjectObjects(project.objects);
+        setNotice("Proyecto guardado cargado.");
+      })
+      .catch(() => {
+        if (active) setNotice("No se pudo cargar el proyecto guardado.");
+      });
+    return () => { active = false; };
+  }, [loadProjectObjects]);
 
   useEffect(() => {
     function handleHistoryShortcut(event: KeyboardEvent) {
@@ -278,7 +293,7 @@ export function App() {
                   onClick={() => selectObject(object.id)}
                 >
                   <input aria-label={`Incluir ${object.name} en operación booleana`} type="checkbox" checked={booleanSelection.includes(object.id)} onClick={(event) => event.stopPropagation()} onChange={() => toggleBooleanSelection(object.id)} />
-                  <span className="object-dot" />
+                  <span className="object-dot" style={{ backgroundColor: object.color ?? "#8b9cf6" }} />
                   <span>{object.name}</span>
                 </button>
                 <select
@@ -322,6 +337,19 @@ export function App() {
               <div className="selected-object-card">
                 <span className="object-preview">◇</span>
                 <div><b>{selected.name}</b><small>{selected.kind === "custom" ? "SÓLIDO RESULTANTE" : selected.kind.toUpperCase()}</small></div>
+              </div>
+              <div className="property-section">
+                <div className="property-title">Apariencia</div>
+                <label className="property-row">
+                  <span>Color del objeto</span>
+                  <input
+                    aria-label="Color del objeto seleccionado"
+                    type="color"
+                    value={selected.color ?? "#8b9cf6"}
+                    onChange={(event) => updateObject(selected.id, { color: event.target.value })}
+                  />
+                </label>
+                <small>El color se guarda en el proyecto y no modifica la geometría. El formato STL no conserva colores.</small>
               </div>
               <div className="property-section">
                 <div className="property-title">Dimensiones <span>mm</span></div>

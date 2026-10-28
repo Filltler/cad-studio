@@ -322,7 +322,7 @@ export function Viewport({ multiSelectMode = false, onObjectSelect }: ViewportPr
           geometry.computeVertexNormals();
         }
         const material = new THREE.MeshStandardMaterial({
-          color: object.id === selectedId ? "#60a5fa" : "#8b9cf6",
+          color: object.color ?? "#8b9cf6",
           metalness: 0.12,
           roughness: 0.38
         });
@@ -344,7 +344,7 @@ export function Viewport({ multiSelectMode = false, onObjectSelect }: ViewportPr
         THREE.MathUtils.degToRad(object.rotation?.z ?? 0)
         );
       }
-      (mesh.material as THREE.MeshStandardMaterial).color.set(object.id === selectedId ? "#60a5fa" : "#8b9cf6");
+      (mesh.material as THREE.MeshStandardMaterial).color.set(object.color ?? "#8b9cf6");
     }
 
     const selectedMesh = selectedId ? existing.get(selectedId) : undefined;
