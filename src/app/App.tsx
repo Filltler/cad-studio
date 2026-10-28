@@ -101,10 +101,15 @@ export function App() {
     }
     try {
       setNotice("Generando cavidad y comprobando la malla…");
-      const vertices = await calculateHollow(selected, wallThickness);
+      const thickness = Number(wallThickness);
+      if (!wallThickness.trim() || !Number.isFinite(thickness) || thickness <= 0) {
+        setNotice("Ingresá un espesor mayor que 0 mm.");
+        return;
+      }
+      const vertices = await calculateHollow(selected, thickness);
       applyBooleanResult([selected.id], `Vaciado ${selected.name}`, vertices);
       setBooleanSelection([]);
-      setNotice(`Vaciado completado con paredes de ${wallThickness} mm.`);
+      setNotice(`Vaciado completado con paredes de ${thickness} mm.`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "No se pudo vaciar la pieza.");
     }
@@ -354,10 +359,7 @@ export function App() {
                     max="100"
                     step="0.1"
                     value={wallThickness}
-                    onChange={(event) => {
-                      const value = Number(event.target.value);
-                      if (Number.isFinite(value) && value > 0) setWallThickness(value);
-                    }}
+                    onChange={(event) => setWallThickness(event.target.value)}
                   />
                 </label>
                 <button
