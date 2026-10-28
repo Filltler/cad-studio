@@ -278,7 +278,7 @@ export function App() {
                   onClick={() => selectObject(object.id)}
                 >
                   <input aria-label={`Incluir ${object.name} en operación booleana`} type="checkbox" checked={booleanSelection.includes(object.id)} onClick={(event) => event.stopPropagation()} onChange={() => toggleBooleanSelection(object.id)} />
-                  <span className="object-dot" />
+                  <span className="object-dot" style={{ backgroundColor: object.color ?? "#8b9cf6" }} />
                   <span>{object.name}</span>
                 </button>
                 <select
@@ -322,6 +322,19 @@ export function App() {
               <div className="selected-object-card">
                 <span className="object-preview">◇</span>
                 <div><b>{selected.name}</b><small>{selected.kind === "custom" ? "SÓLIDO RESULTANTE" : selected.kind.toUpperCase()}</small></div>
+              </div>
+              <div className="property-section">
+                <div className="property-title">Apariencia</div>
+                <label className="property-row">
+                  <span>Color del objeto</span>
+                  <input
+                    aria-label="Color del objeto seleccionado"
+                    type="color"
+                    value={selected.color ?? "#8b9cf6"}
+                    onChange={(event) => updateObject(selected.id, { color: event.target.value })}
+                  />
+                </label>
+                <small>El color se guarda en el proyecto y no modifica la geometría. El formato STL no conserva colores.</small>
               </div>
               <div className="property-section">
                 <div className="property-title">Dimensiones <span>mm</span></div>
