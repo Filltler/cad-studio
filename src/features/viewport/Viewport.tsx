@@ -22,7 +22,7 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, preview = nu
   const beginTransaction = useEditorStore((s) => s.beginTransaction);
   const endTransaction = useEditorStore((s) => s.endTransaction);
   const [mode, setMode] = useState<TransformMode>("translate");
-  const meshMap = useRef(new Map<string, THREE.Mesh>());
+  const meshMap = useRef(new Map<string, THREE.Mesh>());\n  const meshCenterById = useRef(new Map<string, THREE.Vector3>());
   const previewMeshRef = useRef<THREE.Mesh | null>(null);
   const transformRef = useRef<TransformControls | null>(null);
   const orbitRef = useRef<OrbitControls | null>(null);
@@ -105,10 +105,14 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, preview = nu
       if (!mesh || !id) return;
       const source = objectsRef.current.find((object) => object.id === id);
       if (source?.kind === "custom") {
-        // Custom boolean meshes store their vertices in world coordinates.
-        // Apply translation as an object transform without overwriting their real dimensions.
+        const center = meshCenterById.current.get(id) ?? new THREE.Vector3();
         updateObject(id, {
-          position: { x: mesh.position.x, y: mesh.position.y, z: mesh.position.z }
+          position: { x: mesh.position.x - center.x, y: mesh.position.y - center.y, z: mesh.position.z - center.z },
+          rotation: {
+            x: THREE.MathUtils.radToDeg(mesh.rotation.x),
+            y: THREE.MathUtils.radToDeg(mesh.rotation.y),
+            z: THREE.MathUtils.radToDeg(mesh.rotation.z)
+          }
         });
         return;
       }
@@ -263,7 +267,7 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, preview = nu
         if (Array.isArray(material)) material.forEach((m) => m.dispose());
         else material.dispose();
       });
-      meshMap.current.clear();
+      meshMap.current.clear();\n      meshCenterById.current.clear();
       if (previewMeshRef.current) {
         scene.remove(previewMeshRef.current);
         previewMeshRef.current.geometry.dispose();
@@ -335,7 +339,11 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, preview = nu
               : new THREE.SphereGeometry(0.5, 32, 24);
         if (object.kind === "custom") {
           geometry.setAttribute("position", new THREE.Float32BufferAttribute(object.geometryVertices ?? [], 3));
+          geometry.computeBoundingBox();
+          const center = geometry.boundingBox?.getCenter(new THREE.Vector3()) ?? new THREE.Vector3();
+          geometry.translate(-center.x, -center.y, -center.z);
           geometry.computeVertexNormals();
+          meshCenterById.current.set(object.id, center);
         }
         const material = new THREE.MeshStandardMaterial({
           color: object.color ?? "#8b9cf6",
@@ -348,11 +356,14 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, preview = nu
         scene.add(mesh);
       }
       if (object.kind === "custom") {
-        // The custom mesh vertices are already in world-coordinate units; translation
-        // is supported, while scale/rotation remain unapplied until local-space storage exists.
-        mesh.position.set(object.position.x, object.position.y, object.position.z);
+        const center = meshCenterById.current.get(object.id) ?? new THREE.Vector3();
+        mesh.position.set(center.x + object.position.x, center.y + object.position.y, center.z + object.position.z);
         mesh.scale.set(1, 1, 1);
-        mesh.rotation.set(0, 0, 0);
+        mesh.rotation.set(
+          THREE.MathUtils.degToRad(object.rotation?.x ?? 0),
+          THREE.MathUtils.degToRad(object.rotation?.y ?? 0),
+          THREE.MathUtils.degToRad(object.rotation?.z ?? 0)
+        );
       } else {
         mesh.position.set(object.position.x, object.position.y, object.position.z);
         mesh.scale.set(object.dimensions.x, object.dimensions.y, object.dimensions.z);
