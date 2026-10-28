@@ -185,18 +185,52 @@ export function App() {
 
   async function handleSave() {
     try {
-      await saveProject({
-        schemaVersion: 1,
-        id: "local-project",
-        name: "Mi primer proyecto",
-        units: "mm",
-        objects,
-        updatedAt: new Date().toISOString()
-      });
-      setNotice("Proyecto guardado localmente.");
-    } catch {
-      setNotice("No se pudo guardar el proyecto en este navegador.");
-    }
+      await saveProject({ schemaVersion: 1, id: projectId, name: projectName, units: "mm", objects, updatedAt: new Date().toISOString() });
+      await refreshProjects();
+      setNotice("Proyecto guardado: " + projectName);
+    } catch { setNotice("No se pudo guardar el proyecto en este navegador."); }
+  }
+
+  async function handleCreateProject() {
+    const entered = window.prompt("Nombre del nuevo proyecto:", "Proyecto nuevo");
+    if (entered === null) return;
+    const name = entered.trim();
+    if (!name) { setNotice("El nombre del proyecto no puede estar vacío."); return; }
+    const id = crypto.randomUUID();
+    try {
+      await saveProject({ schemaVersion: 1, id, name, units: "mm", objects: [], updatedAt: new Date().toISOString() });
+      loadProjectObjects([]);
+      setProjectId(id);
+      setProjectName(name);
+      setBooleanSelection([]);
+      await refreshProjects();
+      setNotice("Proyecto creado: " + name);
+    } catch { setNotice("No se pudo crear el proyecto."); }
+  }
+
+  async function handleOpenProject(id: string) {
+    try {
+      const project = await loadProject(id);
+      if (!project) { setNotice("No se encontró ese proyecto guardado."); return; }
+      loadProjectObjects(project.objects);
+      setProjectId(project.id);
+      setProjectName(project.name);
+      setBooleanSelection([]);
+      setNotice("Proyecto abierto: " + project.name);
+    } catch { setNotice("No se pudo abrir el proyecto seleccionado."); }
+  }
+
+  async function handleRenameProject() {
+    const entered = window.prompt("Nuevo nombre del proyecto:", projectName);
+    if (entered === null) return;
+    const name = entered.trim();
+    if (!name) { setNotice("El nombre del proyecto no puede estar vacío."); return; }
+    try {
+      await saveProject({ schemaVersion: 1, id: projectId, name, units: "mm", objects, updatedAt: new Date().toISOString() });
+      setProjectName(name);
+      await refreshProjects();
+      setNotice("Proyecto renombrado: " + name);
+    } catch { setNotice("No se pudo renombrar el proyecto."); }
   }
 
   function handleExportSTL() {
@@ -265,6 +299,12 @@ export function App() {
         </div>
         <div className="topbar-spacer" />
         <span className="unit-chip">MM</span>
+        <select aria-label="Proyecto actual" className="project-select" value={projectId} onChange={(event) => void handleOpenProject(event.target.value)}>
+          {projects.length === 0 && <option value={projectId}>{projectName}</option>}
+          {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+        </select>
+        <button className="secondary-button" onClick={() => void handleCreateProject()}>Nuevo proyecto</button>
+        <button className="secondary-button" onClick={() => void handleRenameProject()}>Renombrar</button>
         <button className="secondary-button" onClick={undo} disabled={!canUndo} title="Deshacer (Ctrl+Z)">Deshacer</button>
         <button className="secondary-button" onClick={redo} disabled={!canRedo} title="Rehacer (Ctrl+Y)">Rehacer</button>
         <button className="secondary-button" onClick={() => setAdvanced((v) => !v)}>
