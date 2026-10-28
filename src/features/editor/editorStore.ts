@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { ProjectObject, PrimitiveKind, Vector3 } from "../../domain/project";
+import type { BooleanRole, ProjectObject, PrimitiveKind, Vector3 } from "../../domain/project";
 
 type EditorState = {
   objects: ProjectObject[];
@@ -12,7 +12,7 @@ type EditorState = {
   redo: () => void;
   addPrimitive: (kind: Exclude<PrimitiveKind, "custom">) => void;
   selectObject: (id: string | null) => void;
-  updateObject: (id: string, patch: Partial<Pick<ProjectObject, "position" | "dimensions" | "rotation">>) => void;
+  updateObject: (id: string, patch: Partial<Pick<ProjectObject, "position" | "dimensions" | "rotation" | "booleanRole">>) => void;
   applyBooleanResult: (objectIds: string[], name: string, vertices: number[]) => void;
 };
 
@@ -31,6 +31,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       id: crypto.randomUUID(),
       name: "Cubo 1",
       kind: "box",
+      booleanRole: "solid",
       position: { x: 0, y: 10, z: 0 },
       dimensions: { x: 20, y: 20, z: 20 },
       rotation: { x: 0, y: 0, z: 0 }
@@ -66,6 +67,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       id: crypto.randomUUID(),
       name: `${kind === "box" ? "Cubo" : kind === "cylinder" ? "Cilindro" : "Esfera"} ${number}`,
       kind,
+      booleanRole: "solid",
       position: { x: state.objects.length * 8, y: defaultDimensions[kind].y / 2, z: 0 },
       dimensions: { ...defaultDimensions[kind] },
       rotation: { x: 0, y: 0, z: 0 }
@@ -89,7 +91,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const minY = Math.min(...ys), maxY = Math.max(...ys);
     const minZ = Math.min(...zs), maxZ = Math.max(...zs);
     const result: ProjectObject = {
-      id: crypto.randomUUID(), name, kind: "custom",
+      id: crypto.randomUUID(), name, kind: "custom", booleanRole: "solid",
       position: { x: 0, y: 0, z: 0 },
       dimensions: { x: maxX - minX, y: maxY - minY, z: maxZ - minZ },
       rotation: { x: 0, y: 0, z: 0 }, geometryVertices: vertices
