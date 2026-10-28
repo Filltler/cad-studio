@@ -35,11 +35,30 @@ export function App() {
   const canRedo = useEditorStore((s) => s.future.length > 0);
   const selected = objects.find((o) => o.id === selectedId);
   const roundForDisplay = (value: number) => Math.round((value + Number.EPSILON) * 1000) / 1000;
+  const getBedBaseY = (object: typeof objects[number]) => {
+    if (object.kind !== "custom") return object.position.y - object.dimensions.y / 2;
+    const vertices = object.geometryVertices ?? [];
+    if (vertices.length < 3) return object.position.y;
+    const points: THREE.Vector3[] = [];
+    for (let i = 0; i + 2 < vertices.length; i += 3) points.push(new THREE.Vector3(vertices[i], vertices[i + 1], vertices[i + 2]));
+    const center = new THREE.Box3().setFromPoints(points).getCenter(new THREE.Vector3());
+    const rotation = new THREE.Euler(
+      THREE.MathUtils.degToRad(object.rotation.x),
+      THREE.MathUtils.degToRad(object.rotation.y),
+      THREE.MathUtils.degToRad(object.rotation.z)
+    );
+    let minY = Infinity;
+    for (const point of points) {
+      point.sub(center).applyEuler(rotation).add(center);
+      minY = Math.min(minY, point.y);
+    }
+    return minY + object.position.y;
+  };
   useEffect(() => {
     if (!selected) { setNumericDraft({}); return; }
     setNumericDraft({
       dimensionX: String(roundForDisplay(selected.dimensions.x)), dimensionY: String(roundForDisplay(selected.dimensions.y)), dimensionZ: String(roundForDisplay(selected.dimensions.z)),
-      positionX: String(roundForDisplay(selected.position.x)), positionY: String(roundForDisplay(selected.position.y)), positionZ: String(roundForDisplay(selected.position.z)),
+      positionX: String(roundForDisplay(selected.position.x)), positionY: String(roundForDisplay(getBedBaseY(selected))), positionZ: String(roundForDisplay(selected.position.z)),
       rotationX: String(roundForDisplay(selected.rotation.x)), rotationY: String(roundForDisplay(selected.rotation.y)), rotationZ: String(roundForDisplay(selected.rotation.z))
     });
   }, [selectedId]);
@@ -226,10 +245,15 @@ export function App() {
       setNotice("Las dimensiones deben ser mayores que 0 mm.");
       return;
     }
+    const rotation = { x: Number(numericDraft.rotationX), y: Number(numericDraft.rotationY), z: Number(numericDraft.rotationZ) };
+    const enteredBaseY = Number(numericDraft.positionY);
+    const positionY = selected.kind === "custom"
+      ? enteredBaseY - getBedBaseY({ ...selected, position: { ...selected.position, y: 0 }, rotation })
+      : enteredBaseY + dimensions.y / 2;
     updateObject(selected.id, {
       dimensions,
-      position: { x: Number(numericDraft.positionX), y: Number(numericDraft.positionY), z: Number(numericDraft.positionZ) },
-      rotation: { x: Number(numericDraft.rotationX), y: Number(numericDraft.rotationY), z: Number(numericDraft.rotationZ) }
+      position: { x: Number(numericDraft.positionX), y: positionY, z: Number(numericDraft.positionZ) },
+      rotation
     });
     setNotice("Cambios numéricos confirmados.");
   }
@@ -484,7 +508,7 @@ export function App() {
                   const key = "position" + axis.toUpperCase();
                   return <label className="property-row" key={axis}>
                     <span>{axis.toUpperCase()}</span>
-                    <input type="number" step="1" value={numericDraft[key] ?? ""} onChange={(event) => setNumericDraft((draft) => ({ ...draft, [key]: event.target.value }))} />
+                    <input type="number" step="0.001" value={numericDraft[key] ?? ""} onChange={(event) => setNumericDraft((draft) => ({ ...draft, [key]: event.target.value }))} />
                   </label>;
                 })}
               </div>
