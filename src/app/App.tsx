@@ -56,7 +56,14 @@ export function App() {
   }, [selectObject]);
 
   async function handleBoolean(operation: BooleanOperation) {
-    const chosen = objects.filter((object) => booleanSelection.includes(object.id));
+    const selectedObjects = objects.filter((object) => booleanSelection.includes(object.id));
+    const chosen = operation === "subtract"
+      ? [...selectedObjects.filter((object) => object.booleanRole !== "cutter"), ...selectedObjects.filter((object) => object.booleanRole === "cutter")]
+      : selectedObjects;
+    if (operation === "subtract" && (!chosen.some((object) => object.booleanRole === "cutter") || !chosen.some((object) => object.booleanRole !== "cutter"))) {
+      setNotice("Para Restar, marcá al menos un sólido objetivo y una pieza configurada como Cortante.");
+      return;
+    }
     if (chosen.length < 2) {
       setNotice("Marcá al menos dos piezas para realizar la operación.");
       return;
@@ -191,15 +198,26 @@ export function App() {
           </div>
           <div className="object-list">
             {objects.map((object) => (
-              <button
-                key={object.id}
-                className={`object-row ${selectedId === object.id ? "selected" : ""}`}
-                onClick={() => selectObject(object.id)}
-              >
-                <input aria-label={`Incluir ${object.name} en operación booleana`} type="checkbox" checked={booleanSelection.includes(object.id)} onClick={(event) => event.stopPropagation()} onChange={() => toggleBooleanSelection(object.id)} />
-                <span className="object-dot" />
-                <span>{object.name}</span>
-              </button>
+              <div className="object-entry" key={object.id}>
+                <button
+                  className={`object-row ${selectedId === object.id ? "selected" : ""}`}
+                  onClick={() => selectObject(object.id)}
+                >
+                  <input aria-label={`Incluir ${object.name} en operación booleana`} type="checkbox" checked={booleanSelection.includes(object.id)} onClick={(event) => event.stopPropagation()} onChange={() => toggleBooleanSelection(object.id)} />
+                  <span className="object-dot" />
+                  <span>{object.name}</span>
+                </button>
+                <select
+                  aria-label={`Tipo booleano de ${object.name}`}
+                  className="object-role-select"
+                  value={object.booleanRole ?? "solid"}
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={(event) => updateObject(object.id, { booleanRole: event.target.value as "solid" | "cutter" })}
+                >
+                  <option value="solid">Sólido</option>
+                  <option value="cutter">Cortante</option>
+                </select>
+              </div>
             ))}
             {objects.length === 0 && <p className="empty-note">Todavía no hay objetos.</p>}
           </div>
