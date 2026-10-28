@@ -75,7 +75,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   selectObject: (id) => set({ selectedId: id }),
   updateObject: (id, patch) => set((state) => {
     const nextObjects = state.objects.map((object) => object.id === id ? { ...object, ...patch } : object);
-    if (JSON.stringify(nextObjects) === JSON.stringify(state.objects)) return state;
     const history = transactionStart ? { past: state.past, future: state.future } : { past: [...state.past, cloneObjects(state.objects)].slice(-100), future: [] };
     return { ...history, objects: nextObjects };
   }),
