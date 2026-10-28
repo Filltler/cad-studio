@@ -55,12 +55,9 @@ export function calculateBoolean(objects: ProjectObject[], operation: BooleanOpe
       }
     }
     result.updateMatrixWorld(true);
-    // CSG results commonly use indexed geometry. Flatten it so every
-    // triangle has its own three consecutive vertices before storing/exporting.
-    // CSG evaluation returns vertices in the coordinate system of brush A and
-    // also assigns A's world transform to the result brush. Convert the result
-    // back to world coordinates exactly once before storing a transform-free mesh.
-    // Read exactly the active index range and expand each triangle explicitly.
+    // CSG result vertices are in brush A's local frame; the evaluator keeps
+    // brush A's world transform on the result. Bake that transform into every
+    // exported vertex exactly once, while reading only active triangle indices.
     // Avoid BufferGeometry.toNonIndexed(), which can expand unused index-buffer capacity.
     const position = result.geometry.getAttribute("position");
     const index = result.geometry.index;
@@ -72,9 +69,12 @@ export function calculateBoolean(objects: ProjectObject[], operation: BooleanOpe
       availableCount - drawStart
     );
     const vertices: number[] = [];
+    const worldVertex = new THREE.Vector3();
     for (let i = drawStart; i < drawStart + activeCount; i++) {
       const vertexIndex = index ? index.getX(i) : i;
-      vertices.push(position.getX(vertexIndex), position.getY(vertexIndex), position.getZ(vertexIndex));
+      worldVertex.set(position.getX(vertexIndex), position.getY(vertexIndex), position.getZ(vertexIndex));
+      worldVertex.applyMatrix4(result.matrixWorld);
+      vertices.push(worldVertex.x, worldVertex.y, worldVertex.z);
     }
     if (vertices.length < 9) throw new Error("La operación no produjo un sólido válido. Revisá que las piezas se superpongan.");
     return vertices;
