@@ -31,7 +31,7 @@ export const projectSchema = z.object({
     id: z.string().min(1),
     name: z.string().min(1),
     kind: z.enum(["box", "cylinder", "sphere", "custom"]),
-    booleanRole: z.enum(["solid", "cutter"]).default("solid"),
+    booleanRole: z.enum(["solid", "cutter"]).optional(),
     geometryVertices: z.array(z.number().finite()).optional(),
     position: vectorSchema,
     dimensions: vectorSchema.refine((v) => v.x > 0 && v.y > 0 && v.z > 0, "Las dimensiones deben ser positivas."),
