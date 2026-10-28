@@ -3,7 +3,7 @@ import * as THREE from "three";
 import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
 import { Viewport } from "../features/viewport/Viewport";
 import { useEditorStore } from "../features/editor/editorStore";
-import { saveProject } from "../services/storage/projectStorage";
+import { loadProject, saveProject } from "../services/storage/projectStorage";
 import { calculateBoolean, calculateHollow, type BooleanOperation } from "../services/booleanOperations";
 
 export function App() {
@@ -19,6 +19,7 @@ export function App() {
   const selectObject = useEditorStore((s) => s.selectObject);
   const updateObject = useEditorStore((s) => s.updateObject);
   const applyBooleanResult = useEditorStore((s) => s.applyBooleanResult);
+  const loadProjectObjects = useEditorStore((s) => s.loadProjectObjects);
   const undo = useEditorStore((s) => s.undo);
   const redo = useEditorStore((s) => s.redo);
   const canUndo = useEditorStore((s) => s.past.length > 0);
@@ -32,6 +33,20 @@ export function App() {
       rotationX: String(selected.rotation.x), rotationY: String(selected.rotation.y), rotationZ: String(selected.rotation.z)
     });
   }, [selectedId]);
+
+  useEffect(() => {
+    let active = true;
+    loadProject("local-project")
+      .then((project) => {
+        if (!active || !project) return;
+        loadProjectObjects(project.objects);
+        setNotice("Proyecto guardado cargado.");
+      })
+      .catch(() => {
+        if (active) setNotice("No se pudo cargar el proyecto guardado.");
+      });
+    return () => { active = false; };
+  }, [loadProjectObjects]);
 
   useEffect(() => {
     function handleHistoryShortcut(event: KeyboardEvent) {
