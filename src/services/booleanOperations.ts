@@ -57,11 +57,13 @@ export function calculateBoolean(objects: ProjectObject[], operation: BooleanOpe
     result.updateMatrixWorld(true);
     // CSG results commonly use indexed geometry. Flatten it so every
     // triangle has its own three consecutive vertices before storing/exporting.
+    // CSG evaluation returns vertices in the coordinate system of brush A and
+    // also assigns A's world transform to the result brush. Convert the result
+    // back to world coordinates exactly once before storing a transform-free mesh.
     const geometry = result.geometry.index
       ? result.geometry.toNonIndexed()
       : result.geometry.clone();
-    // Evaluator/GeometryBuilder already transforms CSG vertices into world coordinates.
-    // Applying result.matrixWorld here would transform them a second time and tear the mesh.
+    geometry.applyMatrix4(result.matrixWorld);
     const position = geometry.getAttribute("position");
     // BufferGeometry attributes may retain unused capacity after CSG generation.
     // Read only the active vertex range, not the entire backing array.
