@@ -26,7 +26,8 @@ export function App() {
   const selectObject = useEditorStore((s) => s.selectObject);
   const deleteObjects = useEditorStore((s) => s.deleteObjects);
   const updateObject = useEditorStore((s) => s.updateObject);
-  const applyBooleanResult = useEditorStore((s) => s.applyBooleanResult);\n  const applyHeightSplitResult = useEditorStore((s) => s.applyHeightSplitResult);
+  const applyBooleanResult = useEditorStore((s) => s.applyBooleanResult); 
+  const applyHeightSplitResult = useEditorStore((s) => s.applyHeightSplitResult);
   const loadProjectObjects = useEditorStore((s) => s.loadProjectObjects);
   const undo = useEditorStore((s) => s.undo);
   const redo = useEditorStore((s) => s.redo);
