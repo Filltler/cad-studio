@@ -4,16 +4,40 @@ import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
 import { Viewport } from "../features/viewport/Viewport";
 import { useEditorStore } from "../features/editor/editorStore";
 import { saveProject } from "../services/storage/projectStorage";
+import { calculateBoolean, type BooleanOperation } from "../services/booleanOperations";
 
 export function App() {
   const [advanced, setAdvanced] = useState(false);
+  const [booleanSelection, setBooleanSelection] = useState<string[]>([]);
   const [notice, setNotice] = useState("MiCAD · herramientas CAD en desarrollo");
   const objects = useEditorStore((s) => s.objects);
   const selectedId = useEditorStore((s) => s.selectedId);
   const addPrimitive = useEditorStore((s) => s.addPrimitive);
   const selectObject = useEditorStore((s) => s.selectObject);
   const updateObject = useEditorStore((s) => s.updateObject);
+  const applyBooleanResult = useEditorStore((s) => s.applyBooleanResult);
   const selected = objects.find((o) => o.id === selectedId);
+
+  function toggleBooleanSelection(id: string) {
+    setBooleanSelection((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  }
+
+  function handleBoolean(operation: BooleanOperation) {
+    const chosen = objects.filter((object) => booleanSelection.includes(object.id));
+    if (chosen.length < 2) {
+      setNotice("Marcá al menos dos piezas para realizar la operación.");
+      return;
+    }
+    try {
+      const vertices = calculateBoolean(chosen, operation);
+      const name = operation === "union" ? "Unión" : operation === "subtract" ? "Diferencia" : "Intersección";
+      applyBooleanResult(chosen.map((object) => object.id), `Resultado ${name}`, vertices);
+      setBooleanSelection([]);
+      setNotice(`Operación ${name.toLowerCase()} completada. Se reemplazaron las piezas seleccionadas.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No se pudo completar la operación booleana.");
+    }
+  }
 
   async function handleSave() {
     try {
@@ -40,20 +64,30 @@ export function App() {
     const scene = new THREE.Scene();
     const geometries: THREE.BufferGeometry[] = [];
     for (const object of objects) {
-      const geometry = object.kind === "box"
-        ? new THREE.BoxGeometry(1, 1, 1)
-        : object.kind === "cylinder"
-          ? new THREE.CylinderGeometry(0.5, 0.5, 1, 48)
-          : new THREE.SphereGeometry(0.5, 32, 24);
+      const geometry = object.kind === "custom"
+        ? new THREE.BufferGeometry()
+        : object.kind === "box"
+          ? new THREE.BoxGeometry(1, 1, 1)
+          : object.kind === "cylinder"
+            ? new THREE.CylinderGeometry(0.5, 0.5, 1, 48)
+            : new THREE.SphereGeometry(0.5, 32, 24);
+      if (object.kind === "custom") {
+        geometry.setAttribute("position", new THREE.Float32BufferAttribute(object.geometryVertices ?? [], 3));
+        geometry.computeVertexNormals();
+      }
       geometries.push(geometry);
       const mesh = new THREE.Mesh(geometry);
-      mesh.position.set(object.position.x, object.position.y, object.position.z);
-      mesh.scale.set(object.dimensions.x, object.dimensions.y, object.dimensions.z);
-      mesh.rotation.set(
+      if (object.kind === "custom") {
+        mesh.position.set(0, 0, 0);
+      } else {
+        mesh.position.set(object.position.x, object.position.y, object.position.z);
+        mesh.scale.set(object.dimensions.x, object.dimensions.y, object.dimensions.z);
+        mesh.rotation.set(
         THREE.MathUtils.degToRad(object.rotation?.x ?? 0),
         THREE.MathUtils.degToRad(object.rotation?.y ?? 0),
         THREE.MathUtils.degToRad(object.rotation?.z ?? 0)
-      );
+        );
+      }
       scene.add(mesh);
     }
 
@@ -108,6 +142,14 @@ export function App() {
           </button>
 
           <div className="section-heading object-heading">Objetos del proyecto <span>{objects.length}</span></div>
+          <div className="boolean-tools">
+            <small>Marcá las piezas que querés combinar o cortar.</small>
+            <div className="boolean-buttons">
+              <button className="secondary-button" onClick={() => handleBoolean("union")}>Unión</button>
+              <button className="secondary-button" onClick={() => handleBoolean("subtract")}>Restar</button>
+            </div>
+            <button className="secondary-button" onClick={() => handleBoolean("intersect")}>Intersección</button>
+          </div>
           <div className="object-list">
             {objects.map((object) => (
               <button
@@ -115,6 +157,7 @@ export function App() {
                 className={`object-row ${selectedId === object.id ? "selected" : ""}`}
                 onClick={() => selectObject(object.id)}
               >
+                <input aria-label={`Incluir ${object.name} en operación booleana`} type="checkbox" checked={booleanSelection.includes(object.id)} onClick={(event) => event.stopPropagation()} onChange={() => toggleBooleanSelection(object.id)} />
                 <span className="object-dot" />
                 <span>{object.name}</span>
               </button>
@@ -147,7 +190,7 @@ export function App() {
             <>
               <div className="selected-object-card">
                 <span className="object-preview">◇</span>
-                <div><b>{selected.name}</b><small>{selected.kind.toUpperCase()}</small></div>
+                <div><b>{selected.name}</b><small>{selected.kind === "custom" ? "SÓLIDO RESULTANTE" : selected.kind.toUpperCase()}</small></div>
               </div>
               <div className="property-section">
                 <div className="property-title">Dimensiones <span>mm</span></div>
