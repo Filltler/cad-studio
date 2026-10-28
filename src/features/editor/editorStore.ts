@@ -23,6 +23,8 @@ const defaultDimensions: Record<Exclude<PrimitiveKind, "custom">, Vector3> = {
   sphere: { x: 20, y: 20, z: 20 }
 };
 
+const roundMillimeters = (value: number) => Math.round((value + Number.EPSILON) * 1000) / 1000;
+
 const cloneObjects = (objects: ProjectObject[]) => objects.map((object) => ({ ...object, position: { ...object.position }, dimensions: { ...object.dimensions }, rotation: { ...object.rotation }, geometryVertices: object.geometryVertices ? [...object.geometryVertices] : undefined }));
 let transactionStart: ProjectObject[] | null = null;
 
@@ -100,7 +102,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const result: ProjectObject = {
       id: crypto.randomUUID(), name, kind: "custom", booleanRole: "solid", color: selected[0]?.color ?? "#8b9cf6",
       position: { x: 0, y: 0, z: 0 },
-      dimensions: { x: maxX - minX, y: maxY - minY, z: maxZ - minZ },
+      dimensions: { x: roundMillimeters(maxX - minX), y: roundMillimeters(maxY - minY), z: roundMillimeters(maxZ - minZ) },
       rotation: { x: 0, y: 0, z: 0 }, geometryVertices: vertices
     };
     return { ...history, objects: [...state.objects.filter((object) => !objectIds.includes(object.id)), result], selectedId: result.id };
