@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import * as THREE from "three";
 import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
 import { Viewport } from "../features/viewport/Viewport";
@@ -9,6 +9,7 @@ import { calculateBoolean, type BooleanOperation } from "../services/booleanOper
 export function App() {
   const [advanced, setAdvanced] = useState(false);
   const [booleanSelection, setBooleanSelection] = useState<string[]>([]);
+  const [viewportMultiSelect, setViewportMultiSelect] = useState(false);
   const [notice, setNotice] = useState("MiCAD · herramientas CAD en desarrollo");
   const objects = useEditorStore((s) => s.objects);
   const selectedId = useEditorStore((s) => s.selectedId);
@@ -21,6 +22,13 @@ export function App() {
   function toggleBooleanSelection(id: string) {
     setBooleanSelection((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   }
+
+  const handleViewportObjectSelect = useCallback((id: string | null, additive: boolean) => {
+    selectObject(id);
+    if (id && additive) {
+      setBooleanSelection((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+    }
+  }, [selectObject]);
 
   async function handleBoolean(operation: BooleanOperation) {
     const chosen = objects.filter((object) => booleanSelection.includes(object.id));
@@ -144,7 +152,10 @@ export function App() {
 
           <div className="section-heading object-heading">Objetos del proyecto <span>{objects.length}</span></div>
           <div className="boolean-tools">
-            <small>Marcá las piezas que querés combinar o cortar.</small>
+            <small>{viewportMultiSelect ? "Tocá piezas en el área 3D para agregarlas o quitarlas de la selección." : "Marcá las piezas que querés combinar o cortar."}</small>
+            <button className={`secondary-button ${viewportMultiSelect ? "active" : ""}`} onClick={() => setViewportMultiSelect((active) => !active)} aria-pressed={viewportMultiSelect}>
+              {viewportMultiSelect ? "Finalizar selección 3D" : "Seleccionar piezas en 3D"}
+            </button>
             <div className="boolean-buttons">
               <button className="secondary-button" onClick={() => handleBoolean("union")}>Unión</button>
               <button className="secondary-button" onClick={() => handleBoolean("subtract")}>Restar</button>
@@ -178,7 +189,7 @@ export function App() {
               <span className="subtle-chip">Cuadrícula activa</span>
             </div>
           </div>
-          <Viewport />
+          <Viewport multiSelectMode={viewportMultiSelect} onObjectSelect={handleViewportObjectSelect} />
           <div className="viewport-bottom">
             <span>Arrastrá para orbitar · Rueda para zoom</span>
             <span>Unidades: milímetros</span>
