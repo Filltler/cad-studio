@@ -5,7 +5,7 @@ import { saveProject } from "../services/storage/projectStorage";
 
 export function App() {
   const [advanced, setAdvanced] = useState(false);
-  const [notice, setNotice] = useState("Prototipo inicial · los booleanos CAD aún no están implementados");
+  const [notice, setNotice] = useState("MiCAD · herramientas CAD en desarrollo");
   const objects = useEditorStore((s) => s.objects);
   const selectedId = useEditorStore((s) => s.selectedId);
   const addPrimitive = useEditorStore((s) => s.addPrimitive);
@@ -32,10 +32,10 @@ export function App() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div className="brand-mark">C</div>
+        <div className="brand-mark">M</div>
         <div className="brand-copy">
-          <strong>CAD Studio</strong>
-          <span>Diseño 3D modular</span>
+          <strong>MiCAD</strong>
+          <span>Diseño CAD e impresión 3D</span>
         </div>
         <div className="topbar-spacer" />
         <span className="unit-chip">MM</span>
