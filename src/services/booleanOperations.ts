@@ -64,6 +64,6 @@ export function calculateBoolean(objects: ProjectObject[], operation: BooleanOpe
     return vertices;
   } finally {
     result.geometry.dispose();
-    result.material.dispose();
+    disposeMaterial(result.material);
   }
 }
