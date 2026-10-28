@@ -41,8 +41,20 @@ function createWorldGeometry(object: ProjectObject): THREE.BufferGeometry {
     mesh.updateMatrixWorld(true);
     geometry.applyMatrix4(mesh.matrixWorld);
   } else {
-    // Custom boolean meshes store vertices in world coordinates; apply any later translation.
-    geometry.translate(object.position.x, object.position.y, object.position.z);
+    // Custom mesh vertices are stored in world-space coordinates at creation. Center them
+    // so subsequent object rotation is applied around the mesh's own bounding-box center.
+    geometry.computeBoundingBox();
+    const center = geometry.boundingBox?.getCenter(new THREE.Vector3()) ?? new THREE.Vector3();
+    geometry.translate(-center.x, -center.y, -center.z);
+    const mesh = new THREE.Mesh(geometry);
+    mesh.position.set(center.x + object.position.x, center.y + object.position.y, center.z + object.position.z);
+    mesh.rotation.set(
+      THREE.MathUtils.degToRad(object.rotation.x),
+      THREE.MathUtils.degToRad(object.rotation.y),
+      THREE.MathUtils.degToRad(object.rotation.z)
+    );
+    mesh.updateMatrixWorld(true);
+    geometry.applyMatrix4(mesh.matrixWorld);
   }
   geometry.clearGroups();
   return geometry;
