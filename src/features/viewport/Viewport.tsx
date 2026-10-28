@@ -5,6 +5,7 @@ import { TransformControls } from "three/examples/jsm/controls/TransformControls
 import { useEditorStore } from "../editor/editorStore";
 
 type TransformMode = "translate" | "rotate" | "scale";
+type ViewportProps = { multiSelectMode?: boolean; onObjectSelect?: (id: string | null, additive: boolean) => void };
 
 const modeLabels: Record<TransformMode, string> = {
   translate: "Mover",
@@ -12,7 +13,7 @@ const modeLabels: Record<TransformMode, string> = {
   scale: "Escalar"
 };
 
-export function Viewport() {
+export function Viewport({ multiSelectMode = false, onObjectSelect }: ViewportProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const objects = useEditorStore((s) => s.objects);
   const selectedId = useEditorStore((s) => s.selectedId);
@@ -26,8 +27,12 @@ export function Viewport() {
   const orbitRef = useRef<OrbitControls | null>(null);
   const objectsRef = useRef(objects);
   const selectedIdRef = useRef(selectedId);
+  const multiSelectModeRef = useRef(multiSelectMode);
+  const onObjectSelectRef = useRef(onObjectSelect);
   objectsRef.current = objects;
   selectedIdRef.current = selectedId;
+  multiSelectModeRef.current = multiSelectMode;
+  onObjectSelectRef.current = onObjectSelect;
   const modeRef = useRef<TransformMode>("translate");
   const dimensionHandles = useRef<THREE.Mesh[]>([]);
   const dragState = useRef<{
@@ -182,7 +187,9 @@ export function Viewport() {
         }
       }
       const hits = raycaster.intersectObjects([...meshMap.current.values()], false);
-      selectObject(hits[0]?.object.userData.objectId ?? null);
+      const hitId = (hits[0]?.object.userData.objectId as string | undefined) ?? null;
+      if (onObjectSelectRef.current) onObjectSelectRef.current(hitId, multiSelectModeRef.current && hitId !== null);
+      else selectObject(hitId);
     };
     const onPointerMove = (event: PointerEvent) => {
       const drag = dragState.current;
