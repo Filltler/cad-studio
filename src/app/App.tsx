@@ -486,6 +486,24 @@ export function App() {
                 <button className="primary-button" onClick={confirmNumericChanges}>Confirmar cambios</button>
                 <button className="secondary-button" onClick={cancelNumericChanges}>Cancelar cambios</button>
               </div>
+              <div className="property-section height-cut-section">
+                <div className="property-title">Corte por altura <span>Y · mm</span></div>
+                <small>Corta con un plano horizontal en una coordenada Y absoluta y conserva la parte inferior. El original no cambia hasta confirmar.</small>
+                {!cutEnabled ? (
+                  <button className="secondary-button" onClick={() => setCutEnabled(true)}>Activar vista previa</button>
+                ) : (
+                  <>
+                    <label className="property-row">
+                      <span>Altura exacta</span>
+                      <input aria-label="Altura absoluta del corte en Y" type="number" min="0" step="0.01" value={cutHeight} onChange={(event) => setCutHeight(event.target.value)} />
+                    </label>
+                    <input aria-label="Deslizador de altura del corte" type="range" min="0" max="100" step="0.05" value={cutHeight === "" || !Number.isFinite(Number(cutHeight)) ? 0 : Math.min(100, Math.max(0, Number(cutHeight)))} onChange={(event) => setCutHeight(event.target.value)} />
+                    <small>{cutBusy ? "Calculando vista previa…" : cutPreview ? "Vista previa lista. La pieza original sigue intacta." : "Mové el deslizador para actualizar la vista previa."}</small>
+                    <button className="primary-button" disabled={!cutPreview || cutBusy} onClick={confirmHeightCut}>Confirmar corte</button>
+                    <button className="secondary-button" onClick={cancelHeightCut}>Cancelar corte</button>
+                  </>
+                )}
+              </div>
               <div className="property-section">
                 <div className="property-title">Vaciado <span>mm</span></div>
                 {selected.kind === "box" ? (
