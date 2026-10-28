@@ -4,13 +4,13 @@ import type { ProjectObject, PrimitiveKind, Vector3 } from "../../domain/project
 type EditorState = {
   objects: ProjectObject[];
   selectedId: string | null;
-  addPrimitive: (kind: PrimitiveKind) => void;
+  addPrimitive: (kind: Exclude<PrimitiveKind, "custom">) => void;
   selectObject: (id: string | null) => void;
   updateObject: (id: string, patch: Partial<Pick<ProjectObject, "position" | "dimensions" | "rotation">>) => void;
   applyBooleanResult: (objectIds: string[], name: string, vertices: number[]) => void;
 };
 
-const defaultDimensions: Record<PrimitiveKind, Vector3> = {
+const defaultDimensions: Record<Exclude<PrimitiveKind, "custom">, Vector3> = {
   box: { x: 20, y: 20, z: 20 },
   cylinder: { x: 20, y: 20, z: 25 },
   sphere: { x: 20, y: 20, z: 20 }
