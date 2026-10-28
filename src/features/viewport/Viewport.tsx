@@ -25,8 +25,12 @@ export function Viewport({ multiSelectMode = false, onObjectSelect }: ViewportPr
   const orbitRef = useRef<OrbitControls | null>(null);
   const objectsRef = useRef(objects);
   const selectedIdRef = useRef(selectedId);
+  const multiSelectModeRef = useRef(multiSelectMode);
+  const onObjectSelectRef = useRef(onObjectSelect);
   objectsRef.current = objects;
   selectedIdRef.current = selectedId;
+  multiSelectModeRef.current = multiSelectMode;
+  onObjectSelectRef.current = onObjectSelect;
   const modeRef = useRef<TransformMode>("translate");
   const dimensionHandles = useRef<THREE.Mesh[]>([]);
   const dragState = useRef<{
@@ -179,7 +183,7 @@ export function Viewport({ multiSelectMode = false, onObjectSelect }: ViewportPr
       }
       const hits = raycaster.intersectObjects([...meshMap.current.values()], false);
       const hitId = (hits[0]?.object.userData.objectId as string | undefined) ?? null;
-      if (onObjectSelect) onObjectSelect(hitId, multiSelectMode && hitId !== null);
+      if (onObjectSelectRef.current) onObjectSelectRef.current(hitId, multiSelectModeRef.current && hitId !== null);
       else selectObject(hitId);
     };
     const onPointerMove = (event: PointerEvent) => {
@@ -248,7 +252,7 @@ export function Viewport({ multiSelectMode = false, onObjectSelect }: ViewportPr
       renderer.dispose();
       renderer.domElement.remove();
     };
-  }, [selectObject, updateObject, onObjectSelect, multiSelectMode]);
+  }, [selectObject, updateObject]);
 
   useEffect(() => {
     modeRef.current = mode;
