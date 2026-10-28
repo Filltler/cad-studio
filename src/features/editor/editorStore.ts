@@ -14,7 +14,8 @@ type EditorState = {
   selectObject: (id: string | null) => void;
   deleteObjects: (ids: string[]) => void;
   updateObject: (id: string, patch: Partial<Pick<ProjectObject, "position" | "dimensions" | "rotation" | "booleanRole" | "color">>) => void;
-  applyBooleanResult: (objectIds: string[], name: string, vertices: number[]) => void;
+  applyBooleanResult: (objectIds: string[], name: string, vertices: number[]) => void; 
+  applyHeightSplitResult: (objectId: string, name: string, lowerVertices: number[], upperVertices: number[]) => void;
   loadProjectObjects: (objects: ProjectObject[]) => void;
 };
 
@@ -87,6 +88,28 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (next.length === state.objects.length) return state;
     const history = transactionStart ? { past: state.past, future: state.future } : { past: [...state.past, cloneObjects(state.objects)].slice(-100), future: [] };
     return { ...history, objects: next, selectedId: remove.has(state.selectedId ?? "") ? (next[next.length - 1]?.id ?? null) : state.selectedId };
+  }),
+  applyHeightSplitResult: (objectId, name, lowerVertices, upperVertices) => set((state) => {
+    const source = state.objects.find((object) => object.id === objectId);
+    if (!source || lowerVertices.length < 9 || upperVertices.length < 9) return state;
+    const makePart = (partName: string, vertices: number[]): ProjectObject => {
+      const xs = vertices.filter((_, index) => index % 3 === 0);
+      const ys = vertices.filter((_, index) => index % 3 === 1);
+      const zs = vertices.filter((_, index) => index % 3 === 2);
+      const minX = Math.min(...xs), maxX = Math.max(...xs);
+      const minY = Math.min(...ys), maxY = Math.max(...ys);
+      const minZ = Math.min(...zs), maxZ = Math.max(...zs);
+      return {
+        id: crypto.randomUUID(), name: partName, kind: "custom", booleanRole: "solid", color: source.color ?? "#8b9cf6",
+        position: { x: 0, y: 0, z: 0 },
+        dimensions: { x: roundMillimeters(maxX - minX), y: roundMillimeters(maxY - minY), z: roundMillimeters(maxZ - minZ) },
+        rotation: { x: 0, y: 0, z: 0 }, geometryVertices: vertices
+      };
+    };
+    const lower = makePart(name + " · inferior", lowerVertices);
+    const upper = makePart(name + " · superior", upperVertices);
+    const history = transactionStart ? { past: state.past, future: state.future } : { past: [...state.past, cloneObjects(state.objects)].slice(-100), future: [] };
+    return { ...history, objects: [...state.objects.filter((object) => object.id !== objectId), lower, upper], selectedId: lower.id };
   }),
   loadProjectObjects: (objects) => {
     transactionStart = null;

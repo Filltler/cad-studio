@@ -4,7 +4,7 @@ import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
 import { Viewport } from "../features/viewport/Viewport";
 import { useEditorStore } from "../features/editor/editorStore";
 import { listProjects, loadProject, saveProject } from "../services/storage/projectStorage";
-import { calculateBoolean, calculateHeightCut, calculateHollow, type BooleanOperation } from "../services/booleanOperations";
+import { calculateBoolean, calculateHeightCut, calculateHeightSplit, calculateHollow, type BooleanOperation } from "../services/booleanOperations";
 
 export function App() {
   const [advanced, setAdvanced] = useState(false);
@@ -26,7 +26,8 @@ export function App() {
   const selectObject = useEditorStore((s) => s.selectObject);
   const deleteObjects = useEditorStore((s) => s.deleteObjects);
   const updateObject = useEditorStore((s) => s.updateObject);
-  const applyBooleanResult = useEditorStore((s) => s.applyBooleanResult);
+  const applyBooleanResult = useEditorStore((s) => s.applyBooleanResult); 
+  const applyHeightSplitResult = useEditorStore((s) => s.applyHeightSplitResult);
   const loadProjectObjects = useEditorStore((s) => s.loadProjectObjects);
   const undo = useEditorStore((s) => s.undo);
   const redo = useEditorStore((s) => s.redo);
@@ -158,15 +159,25 @@ export function App() {
     setNotice("Vista previa de corte cancelada; la pieza original no se modificó.");
   }
 
-  function confirmHeightCut() {
+  async function confirmHeightCut() {
     if (!selected || !cutPreview || cutPreview.objectId !== selected.id || cutBusy) {
       setNotice("Esperá a que la vista previa del corte esté lista.");
       return;
     }
-    applyBooleanResult([selected.id], "Corte por altura · " + selected.name, cutPreview.vertices);
-    setCutEnabled(false);
-    setCutPreview(null);
-    setNotice("Corte confirmado a Y = " + Number(cutHeight).toFixed(3) + " mm. Podés deshacerlo.");
+    setCutBusy(true);
+    setNotice("Calculando las dos partes del corte…");
+    try {
+      const parts = await calculateHeightSplit(selected, Number(cutHeight));
+      applyHeightSplitResult(selected.id, "Corte por altura · " + selected.name, parts.lower, parts.upper);
+      setBooleanSelection((current) => current.filter((id) => id !== selected.id));
+      setCutEnabled(false);
+      setCutPreview(null);
+      setNotice("Corte confirmado a Y = " + Number(cutHeight).toFixed(3) + " mm. Se crearon dos objetos independientes; podés deshacerlo.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No se pudieron generar las dos partes del corte.");
+    } finally {
+      setCutBusy(false);
+    }
   }
 
   async function handleHollow() {
@@ -493,7 +504,7 @@ export function App() {
               </div>
               <div className="property-section height-cut-section">
                 <div className="property-title">Corte por altura <span>Y · mm</span></div>
-                <small>Corta con un plano horizontal en una coordenada Y absoluta y conserva la parte inferior. El original no cambia hasta confirmar.</small>
+                <small>Divide la pieza con un plano horizontal en una coordenada Y absoluta. Al confirmar, conserva las dos mitades como objetos independientes.</small>
                 {!cutEnabled ? (
                   <button className="secondary-button" onClick={() => setCutEnabled(true)}>Activar vista previa</button>
                 ) : (
@@ -503,7 +514,7 @@ export function App() {
                       <input aria-label="Altura absoluta del corte en Y" type="number" min="0" step="0.01" value={cutHeight} onChange={(event) => setCutHeight(event.target.value)} />
                     </label>
                     <input aria-label="Deslizador de altura del corte" type="range" min="0" max="100" step="0.05" value={cutHeight === "" || !Number.isFinite(Number(cutHeight)) ? 0 : Math.min(100, Math.max(0, Number(cutHeight)))} onChange={(event) => setCutHeight(event.target.value)} />
-                    <small>{cutBusy ? "Calculando vista previa…" : cutPreview ? "Vista previa lista. La pieza original sigue intacta." : "Mové el deslizador para actualizar la vista previa."}</small>
+                    <small>{cutBusy ? "Calculando vista previa…" : cutPreview ? "Vista previa de la parte inferior lista. Al confirmar se crearán las dos partes independientes." : "Mové el deslizador para actualizar la vista previa."}</small>
                     <button className="primary-button" disabled={!cutPreview || cutBusy} onClick={confirmHeightCut}>Confirmar corte</button>
                     <button className="secondary-button" onClick={cancelHeightCut}>Cancelar corte</button>
                   </>
