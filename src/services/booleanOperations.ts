@@ -60,7 +60,8 @@ export function calculateBoolean(objects: ProjectObject[], operation: BooleanOpe
     const geometry = result.geometry.index
       ? result.geometry.toNonIndexed()
       : result.geometry.clone();
-    geometry.applyMatrix4(result.matrixWorld);
+    // Evaluator/GeometryBuilder already transforms CSG vertices into world coordinates.
+    // Applying result.matrixWorld here would transform them a second time and tear the mesh.
     const position = geometry.getAttribute("position");
     // BufferGeometry attributes may retain unused capacity after CSG generation.
     // Read only the active vertex range, not the entire backing array.
