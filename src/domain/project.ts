@@ -3,8 +3,11 @@ import { z } from "zod";
 export type PrimitiveKind = "box" | "cylinder" | "sphere" | "custom";
 export type Vector3 = { x: number; y: number; z: number };
 
+export type BooleanRole = "solid" | "cutter";
+
 export type ProjectObject = {
   id: string;
+  booleanRole?: BooleanRole;
   name: string;
   kind: PrimitiveKind;
   position: Vector3;
@@ -28,6 +31,7 @@ export const projectSchema = z.object({
     id: z.string().min(1),
     name: z.string().min(1),
     kind: z.enum(["box", "cylinder", "sphere", "custom"]),
+    booleanRole: z.enum(["solid", "cutter"]).default("solid"),
     geometryVertices: z.array(z.number().finite()).optional(),
     position: vectorSchema,
     dimensions: vectorSchema.refine((v) => v.x > 0 && v.y > 0 && v.z > 0, "Las dimensiones deben ser positivas."),
