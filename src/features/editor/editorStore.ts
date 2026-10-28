@@ -14,6 +14,7 @@ type EditorState = {
   selectObject: (id: string | null) => void;
   updateObject: (id: string, patch: Partial<Pick<ProjectObject, "position" | "dimensions" | "rotation" | "booleanRole" | "color">>) => void;
   applyBooleanResult: (objectIds: string[], name: string, vertices: number[]) => void;
+  loadProjectObjects: (objects: ProjectObject[]) => void;
 };
 
 const defaultDimensions: Record<Exclude<PrimitiveKind, "custom">, Vector3> = {
@@ -77,6 +78,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     return { ...history, objects: [...state.objects, object], selectedId: object.id };
   }),
   selectObject: (id) => set({ selectedId: id }),
+  loadProjectObjects: (objects) => {
+    transactionStart = null;
+    set({ objects: cloneObjects(objects), selectedId: objects[0]?.id ?? null, past: [], future: [] });
+  },
   updateObject: (id, patch) => set((state) => {
     const nextObjects = state.objects.map((object) => object.id === id ? { ...object, ...patch } : object);
     const history = transactionStart ? { past: state.past, future: state.future } : { past: [...state.past, cloneObjects(state.objects)].slice(-100), future: [] };
