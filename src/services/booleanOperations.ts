@@ -76,7 +76,6 @@ export function calculateBoolean(objects: ProjectObject[], operation: BooleanOpe
       const vertexIndex = index ? index.getX(i) : i;
       vertices.push(position.getX(vertexIndex), position.getY(vertexIndex), position.getZ(vertexIndex));
     }
-    geometry.dispose();
     if (vertices.length < 9) throw new Error("La operación no produjo un sólido válido. Revisá que las piezas se superpongan.");
     return vertices;
   } finally {
