@@ -39,8 +39,8 @@ export function App() {
     if (!selected) { setNumericDraft({}); return; }
     setNumericDraft({
       dimensionX: String(roundForDisplay(selected.dimensions.x)), dimensionY: String(roundForDisplay(selected.dimensions.y)), dimensionZ: String(roundForDisplay(selected.dimensions.z)),
-      positionX: String(selected.position.x), positionY: String(selected.position.y), positionZ: String(selected.position.z),
-      rotationX: String(selected.rotation.x), rotationY: String(selected.rotation.y), rotationZ: String(selected.rotation.z)
+      positionX: String(roundForDisplay(selected.position.x)), positionY: String(roundForDisplay(selected.position.y)), positionZ: String(roundForDisplay(selected.position.z)),
+      rotationX: String(roundForDisplay(selected.rotation.x)), rotationY: String(roundForDisplay(selected.rotation.y)), rotationZ: String(roundForDisplay(selected.rotation.z))
     });
   }, [selectedId]);
 
@@ -238,8 +238,8 @@ export function App() {
     if (!selected) return;
     setNumericDraft({
       dimensionX: String(selected.dimensions.x), dimensionY: String(selected.dimensions.y), dimensionZ: String(selected.dimensions.z),
-      positionX: String(selected.position.x), positionY: String(selected.position.y), positionZ: String(selected.position.z),
-      rotationX: String(selected.rotation.x), rotationY: String(selected.rotation.y), rotationZ: String(selected.rotation.z)
+      positionX: String(roundForDisplay(selected.position.x)), positionY: String(roundForDisplay(selected.position.y)), positionZ: String(roundForDisplay(selected.position.z)),
+      rotationX: String(roundForDisplay(selected.rotation.x)), rotationY: String(roundForDisplay(selected.rotation.y)), rotationZ: String(roundForDisplay(selected.rotation.z))
     });
     setNotice("Se descartaron los cambios numéricos.");
   }
