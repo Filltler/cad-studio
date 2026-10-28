@@ -143,3 +143,59 @@ export async function calculateBoolean(objects: ProjectObject[], operation: Bool
     geometries.forEach((geometry) => geometry.dispose());
   }
 }
+
+
+/**
+ * Creates a true hollow primitive by subtracting an inner cutter.
+ * Boxes become open-top containers; cylinders become tubes with a through-bore.
+ * Dimensions and positions are expressed in millimeters.
+ */
+export async function calculateHollow(object: ProjectObject, wallThickness: number): Promise<number[]> {
+  if (object.kind !== "box" && object.kind !== "cylinder") {
+    throw new Error("El vaciado está disponible por ahora para cubos y cilindros.");
+  }
+  if (!Number.isFinite(wallThickness) || wallThickness <= 0) {
+    throw new Error("El espesor de pared debe ser mayor que 0 mm.");
+  }
+
+  const minimumSide = object.kind === "box"
+    ? Math.min(object.dimensions.x, object.dimensions.y, object.dimensions.z)
+    : Math.min(object.dimensions.x, object.dimensions.z);
+  if (wallThickness * 2 >= minimumSide) {
+    throw new Error("El espesor es demasiado grande para las dimensiones de la pieza.");
+  }
+
+  const cutter: ProjectObject = object.kind === "box"
+    ? {
+        id: crypto.randomUUID(),
+        name: "Cortante interior",
+        kind: "box",
+        booleanRole: "cutter",
+        position: {
+          x: object.position.x,
+          y: object.position.y + wallThickness / 2 + 0.01,
+          z: object.position.z
+        },
+        dimensions: {
+          x: object.dimensions.x - wallThickness * 2,
+          y: object.dimensions.y - wallThickness + 0.02,
+          z: object.dimensions.z - wallThickness * 2
+        },
+        rotation: { ...object.rotation }
+      }
+    : {
+        id: crypto.randomUUID(),
+        name: "Cortante interior",
+        kind: "cylinder",
+        booleanRole: "cutter",
+        position: { ...object.position },
+        dimensions: {
+          x: object.dimensions.x - wallThickness * 2,
+          y: object.dimensions.y + 0.02,
+          z: object.dimensions.z - wallThickness * 2
+        },
+        rotation: { ...object.rotation }
+      };
+
+  return calculateBoolean([object, cutter], "subtract");
+}
