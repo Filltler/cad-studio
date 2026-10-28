@@ -297,11 +297,17 @@ export function Viewport() {
     for (const object of objects) {
       let mesh = existing.get(object.id);
       if (!mesh) {
-        const geometry = object.kind === "box"
-          ? new THREE.BoxGeometry(1, 1, 1)
-          : object.kind === "cylinder"
-            ? new THREE.CylinderGeometry(0.5, 0.5, 1, 48)
-            : new THREE.SphereGeometry(0.5, 32, 24);
+        const geometry = object.kind === "custom"
+          ? new THREE.BufferGeometry()
+          : object.kind === "box"
+            ? new THREE.BoxGeometry(1, 1, 1)
+            : object.kind === "cylinder"
+              ? new THREE.CylinderGeometry(0.5, 0.5, 1, 48)
+              : new THREE.SphereGeometry(0.5, 32, 24);
+        if (object.kind === "custom") {
+          geometry.setAttribute("position", new THREE.Float32BufferAttribute(object.geometryVertices ?? [], 3));
+          geometry.computeVertexNormals();
+        }
         const material = new THREE.MeshStandardMaterial({
           color: object.id === selectedId ? "#60a5fa" : "#8b9cf6",
           metalness: 0.12,
@@ -312,13 +318,19 @@ export function Viewport() {
         existing.set(object.id, mesh);
         scene.add(mesh);
       }
-      mesh.position.set(object.position.x, object.position.y, object.position.z);
-      mesh.scale.set(object.dimensions.x, object.dimensions.y, object.dimensions.z);
-      mesh.rotation.set(
+      if (object.kind === "custom") {
+        mesh.position.set(0, 0, 0);
+        mesh.scale.set(1, 1, 1);
+        mesh.rotation.set(0, 0, 0);
+      } else {
+        mesh.position.set(object.position.x, object.position.y, object.position.z);
+        mesh.scale.set(object.dimensions.x, object.dimensions.y, object.dimensions.z);
+        mesh.rotation.set(
         THREE.MathUtils.degToRad(object.rotation?.x ?? 0),
         THREE.MathUtils.degToRad(object.rotation?.y ?? 0),
         THREE.MathUtils.degToRad(object.rotation?.z ?? 0)
-      );
+        );
+      }
       (mesh.material as THREE.MeshStandardMaterial).color.set(object.id === selectedId ? "#60a5fa" : "#8b9cf6");
     }
 
