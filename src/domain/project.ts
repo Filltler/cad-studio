@@ -8,6 +8,7 @@ export type BooleanRole = "solid" | "cutter";
 export type ProjectObject = {
   id: string;
   booleanRole?: BooleanRole;
+  color?: string;
   name: string;
   kind: PrimitiveKind;
   position: Vector3;
@@ -32,6 +33,7 @@ export const projectSchema = z.object({
     name: z.string().min(1),
     kind: z.enum(["box", "cylinder", "sphere", "custom"]),
     booleanRole: z.enum(["solid", "cutter"]).optional(),
+    color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
     geometryVertices: z.array(z.number().finite()).optional(),
     position: vectorSchema,
     dimensions: vectorSchema.refine((v) => v.x > 0 && v.y > 0 && v.z > 0, "Las dimensiones deben ser positivas."),

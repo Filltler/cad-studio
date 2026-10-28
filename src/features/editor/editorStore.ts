@@ -12,8 +12,9 @@ type EditorState = {
   redo: () => void;
   addPrimitive: (kind: Exclude<PrimitiveKind, "custom">) => void;
   selectObject: (id: string | null) => void;
-  updateObject: (id: string, patch: Partial<Pick<ProjectObject, "position" | "dimensions" | "rotation" | "booleanRole">>) => void;
+  updateObject: (id: string, patch: Partial<Pick<ProjectObject, "position" | "dimensions" | "rotation" | "booleanRole" | "color">>) => void;
   applyBooleanResult: (objectIds: string[], name: string, vertices: number[]) => void;
+  loadProjectObjects: (objects: ProjectObject[]) => void;
 };
 
 const defaultDimensions: Record<Exclude<PrimitiveKind, "custom">, Vector3> = {
@@ -21,6 +22,8 @@ const defaultDimensions: Record<Exclude<PrimitiveKind, "custom">, Vector3> = {
   cylinder: { x: 20, y: 20, z: 25 },
   sphere: { x: 20, y: 20, z: 20 }
 };
+
+const roundMillimeters = (value: number) => Math.round((value + Number.EPSILON) * 1000) / 1000;
 
 const cloneObjects = (objects: ProjectObject[]) => objects.map((object) => ({ ...object, position: { ...object.position }, dimensions: { ...object.dimensions }, rotation: { ...object.rotation }, geometryVertices: object.geometryVertices ? [...object.geometryVertices] : undefined }));
 let transactionStart: ProjectObject[] | null = null;
@@ -32,6 +35,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       name: "Cubo 1",
       kind: "box",
       booleanRole: "solid",
+      color: "#8b9cf6",
       position: { x: 0, y: 10, z: 0 },
       dimensions: { x: 20, y: 20, z: 20 },
       rotation: { x: 0, y: 0, z: 0 }
@@ -68,6 +72,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       name: `${kind === "box" ? "Cubo" : kind === "cylinder" ? "Cilindro" : "Esfera"} ${number}`,
       kind,
       booleanRole: "solid",
+      color: "#8b9cf6",
       position: { x: state.objects.length * 8, y: defaultDimensions[kind].y / 2, z: 0 },
       dimensions: { ...defaultDimensions[kind] },
       rotation: { x: 0, y: 0, z: 0 }
@@ -75,6 +80,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     return { ...history, objects: [...state.objects, object], selectedId: object.id };
   }),
   selectObject: (id) => set({ selectedId: id }),
+  loadProjectObjects: (objects) => {
+    transactionStart = null;
+    set({ objects: cloneObjects(objects), selectedId: objects[0]?.id ?? null, past: [], future: [] });
+  },
   updateObject: (id, patch) => set((state) => {
     const nextObjects = state.objects.map((object) => object.id === id ? { ...object, ...patch } : object);
     const history = transactionStart ? { past: state.past, future: state.future } : { past: [...state.past, cloneObjects(state.objects)].slice(-100), future: [] };
@@ -91,9 +100,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const minY = Math.min(...ys), maxY = Math.max(...ys);
     const minZ = Math.min(...zs), maxZ = Math.max(...zs);
     const result: ProjectObject = {
-      id: crypto.randomUUID(), name, kind: "custom", booleanRole: "solid",
+      id: crypto.randomUUID(), name, kind: "custom", booleanRole: "solid", color: selected[0]?.color ?? "#8b9cf6",
       position: { x: 0, y: 0, z: 0 },
-      dimensions: { x: maxX - minX, y: maxY - minY, z: maxZ - minZ },
+      dimensions: { x: roundMillimeters(maxX - minX), y: roundMillimeters(maxY - minY), z: roundMillimeters(maxZ - minZ) },
       rotation: { x: 0, y: 0, z: 0 }, geometryVertices: vertices
     };
     return { ...history, objects: [...state.objects.filter((object) => !objectIds.includes(object.id)), result], selectedId: result.id };

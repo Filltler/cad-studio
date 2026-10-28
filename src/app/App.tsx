@@ -3,7 +3,7 @@ import * as THREE from "three";
 import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
 import { Viewport } from "../features/viewport/Viewport";
 import { useEditorStore } from "../features/editor/editorStore";
-import { saveProject } from "../services/storage/projectStorage";
+import { listProjects, loadProject, saveProject } from "../services/storage/projectStorage";
 import { calculateBoolean, calculateHollow, type BooleanOperation } from "../services/booleanOperations";
 
 export function App() {
@@ -13,25 +13,55 @@ export function App() {
   const [notice, setNotice] = useState("MiCAD · herramientas CAD en desarrollo");
   const [wallThicknesses, setWallThicknesses] = useState({ left: "2", right: "2", front: "2", back: "2", bottom: "2" });
   const [numericDraft, setNumericDraft] = useState<Record<string, string>>({});
+  const [projectId, setProjectId] = useState("local-project");
+  const [projectName, setProjectName] = useState("Mi primer proyecto");
+  const [projects, setProjects] = useState<Array<{ id: string; name: string; updatedAt: string }>>([]);
   const objects = useEditorStore((s) => s.objects);
   const selectedId = useEditorStore((s) => s.selectedId);
   const addPrimitive = useEditorStore((s) => s.addPrimitive);
   const selectObject = useEditorStore((s) => s.selectObject);
   const updateObject = useEditorStore((s) => s.updateObject);
   const applyBooleanResult = useEditorStore((s) => s.applyBooleanResult);
+  const loadProjectObjects = useEditorStore((s) => s.loadProjectObjects);
   const undo = useEditorStore((s) => s.undo);
   const redo = useEditorStore((s) => s.redo);
   const canUndo = useEditorStore((s) => s.past.length > 0);
   const canRedo = useEditorStore((s) => s.future.length > 0);
   const selected = objects.find((o) => o.id === selectedId);
+  const roundForDisplay = (value: number) => Math.round((value + Number.EPSILON) * 1000) / 1000;
   useEffect(() => {
     if (!selected) { setNumericDraft({}); return; }
     setNumericDraft({
-      dimensionX: String(selected.dimensions.x), dimensionY: String(selected.dimensions.y), dimensionZ: String(selected.dimensions.z),
+      dimensionX: String(roundForDisplay(selected.dimensions.x)), dimensionY: String(roundForDisplay(selected.dimensions.y)), dimensionZ: String(roundForDisplay(selected.dimensions.z)),
       positionX: String(selected.position.x), positionY: String(selected.position.y), positionZ: String(selected.position.z),
       rotationX: String(selected.rotation.x), rotationY: String(selected.rotation.y), rotationZ: String(selected.rotation.z)
     });
   }, [selectedId]);
+
+  const refreshProjects = useCallback(async () => {
+    const saved = await listProjects();
+    setProjects(saved.map(({ id, name, updatedAt }) => ({ id, name, updatedAt })).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+    return saved;
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    listProjects()
+      .then((saved) => {
+        if (!active) return;
+        const ordered = [...saved].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+        setProjects(ordered.map(({ id, name, updatedAt }) => ({ id, name, updatedAt })));
+        const project = ordered[0];
+        if (project) {
+          loadProjectObjects(project.objects);
+          setProjectId(project.id);
+          setProjectName(project.name);
+          setNotice("Proyecto guardado cargado.");
+        }
+      })
+      .catch(() => { if (active) setNotice("No se pudieron cargar los proyectos guardados."); });
+    return () => { active = false; };
+  }, [loadProjectObjects]);
 
   useEffect(() => {
     function handleHistoryShortcut(event: KeyboardEvent) {
@@ -92,11 +122,11 @@ export function App() {
 
   async function handleHollow() {
     if (!selected) {
-      setNotice("Seleccioná un cubo o cilindro para vaciarlo.");
+      setNotice("Seleccioná un cubo, cilindro o esfera para vaciarlo.");
       return;
     }
-    if (selected.kind !== "box" && selected.kind !== "cylinder") {
-      setNotice("El vaciado está disponible por ahora para cubos y cilindros.");
+    if (selected.kind !== "box" && selected.kind !== "cylinder" && selected.kind !== "sphere") {
+      setNotice("Esta pieza no admite vaciado todavía.");
       return;
     }
     try {
@@ -108,17 +138,17 @@ export function App() {
         back: Number(wallThicknesses.back),
         bottom: Number(wallThicknesses.bottom)
       };
-      const activeValues = selected.kind === "cylinder" ? [parsedWalls.left] : Object.values(parsedWalls);
+      const activeValues = selected.kind === "box" ? Object.values(parsedWalls) : [parsedWalls.left];
       if (activeValues.some((value) => !Number.isFinite(value) || value <= 0)) {
         setNotice("Ingresá espesores mayores que 0 mm en todos los campos.");
         return;
       }
-      const vertices = await calculateHollow(selected, selected.kind === "cylinder" ? parsedWalls.left : parsedWalls);
+      const vertices = await calculateHollow(selected, selected.kind === "box" ? parsedWalls : parsedWalls.left);
       applyBooleanResult([selected.id], `Vaciado ${selected.name}`, vertices);
       setBooleanSelection([]);
       setNotice(selected.kind === "cylinder"
         ? `Tubo generado con pared de ${parsedWalls.left} mm.`
-        : "Vaciado completado con espesores independientes.");
+        : selected.kind === "sphere" ? "Esfera hueca generada con pared de " + parsedWalls.left + " mm." : "Vaciado completado con espesores independientes.");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "No se pudo vaciar la pieza.");
     }
@@ -156,18 +186,52 @@ export function App() {
 
   async function handleSave() {
     try {
-      await saveProject({
-        schemaVersion: 1,
-        id: "local-project",
-        name: "Mi primer proyecto",
-        units: "mm",
-        objects,
-        updatedAt: new Date().toISOString()
-      });
-      setNotice("Proyecto guardado localmente.");
-    } catch {
-      setNotice("No se pudo guardar el proyecto en este navegador.");
-    }
+      await saveProject({ schemaVersion: 1, id: projectId, name: projectName, units: "mm", objects, updatedAt: new Date().toISOString() });
+      await refreshProjects();
+      setNotice("Proyecto guardado: " + projectName);
+    } catch { setNotice("No se pudo guardar el proyecto en este navegador."); }
+  }
+
+  async function handleCreateProject() {
+    const entered = window.prompt("Nombre del nuevo proyecto:", "Proyecto nuevo");
+    if (entered === null) return;
+    const name = entered.trim();
+    if (!name) { setNotice("El nombre del proyecto no puede estar vacío."); return; }
+    const id = crypto.randomUUID();
+    try {
+      await saveProject({ schemaVersion: 1, id, name, units: "mm", objects: [], updatedAt: new Date().toISOString() });
+      loadProjectObjects([]);
+      setProjectId(id);
+      setProjectName(name);
+      setBooleanSelection([]);
+      await refreshProjects();
+      setNotice("Proyecto creado: " + name);
+    } catch { setNotice("No se pudo crear el proyecto."); }
+  }
+
+  async function handleOpenProject(id: string) {
+    try {
+      const project = await loadProject(id);
+      if (!project) { setNotice("No se encontró ese proyecto guardado."); return; }
+      loadProjectObjects(project.objects);
+      setProjectId(project.id);
+      setProjectName(project.name);
+      setBooleanSelection([]);
+      setNotice("Proyecto abierto: " + project.name);
+    } catch { setNotice("No se pudo abrir el proyecto seleccionado."); }
+  }
+
+  async function handleRenameProject() {
+    const entered = window.prompt("Nuevo nombre del proyecto:", projectName);
+    if (entered === null) return;
+    const name = entered.trim();
+    if (!name) { setNotice("El nombre del proyecto no puede estar vacío."); return; }
+    try {
+      await saveProject({ schemaVersion: 1, id: projectId, name, units: "mm", objects, updatedAt: new Date().toISOString() });
+      setProjectName(name);
+      await refreshProjects();
+      setNotice("Proyecto renombrado: " + name);
+    } catch { setNotice("No se pudo renombrar el proyecto."); }
   }
 
   function handleExportSTL() {
@@ -236,6 +300,12 @@ export function App() {
         </div>
         <div className="topbar-spacer" />
         <span className="unit-chip">MM</span>
+        <select aria-label="Proyecto actual" className="project-select" value={projectId} onChange={(event) => void handleOpenProject(event.target.value)}>
+          {projects.length === 0 && <option value={projectId}>{projectName}</option>}
+          {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+        </select>
+        <button className="secondary-button" onClick={() => void handleCreateProject()}>Nuevo proyecto</button>
+        <button className="secondary-button" onClick={() => void handleRenameProject()}>Renombrar</button>
         <button className="secondary-button" onClick={undo} disabled={!canUndo} title="Deshacer (Ctrl+Z)">Deshacer</button>
         <button className="secondary-button" onClick={redo} disabled={!canRedo} title="Rehacer (Ctrl+Y)">Rehacer</button>
         <button className="secondary-button" onClick={() => setAdvanced((v) => !v)}>
@@ -278,7 +348,7 @@ export function App() {
                   onClick={() => selectObject(object.id)}
                 >
                   <input aria-label={`Incluir ${object.name} en operación booleana`} type="checkbox" checked={booleanSelection.includes(object.id)} onClick={(event) => event.stopPropagation()} onChange={() => toggleBooleanSelection(object.id)} />
-                  <span className="object-dot" />
+                  <span className="object-dot" style={{ backgroundColor: object.color ?? "#8b9cf6" }} />
                   <span>{object.name}</span>
                 </button>
                 <select
@@ -322,6 +392,19 @@ export function App() {
               <div className="selected-object-card">
                 <span className="object-preview">◇</span>
                 <div><b>{selected.name}</b><small>{selected.kind === "custom" ? "SÓLIDO RESULTANTE" : selected.kind.toUpperCase()}</small></div>
+              </div>
+              <div className="property-section">
+                <div className="property-title">Apariencia</div>
+                <label className="property-row">
+                  <span>Color del objeto</span>
+                  <input
+                    aria-label="Color del objeto seleccionado"
+                    type="color"
+                    value={selected.color ?? "#8b9cf6"}
+                    onChange={(event) => updateObject(selected.id, { color: event.target.value })}
+                  />
+                </label>
+                <small>El color se guarda en el proyecto y no modifica la geometría. El formato STL no conserva colores.</small>
               </div>
               <div className="property-section">
                 <div className="property-title">Dimensiones <span>mm</span></div>
@@ -385,9 +468,9 @@ export function App() {
                 ) : (
                   <>
                     <label className="property-row">
-                      <span>Espesor radial</span>
+                      <span>{selected.kind === "cylinder" ? "Espesor radial" : "Espesor de pared"}</span>
                       <input
-                        aria-label="Espesor radial para vaciado cilíndrico"
+                        aria-label={selected.kind === "cylinder" ? "Espesor radial para vaciado cilíndrico" : "Espesor de pared para vaciado esférico"}
                         type="number"
                         min="0.1"
                         step="0.1"
@@ -395,7 +478,7 @@ export function App() {
                         onChange={(event) => setWallThicknesses((current) => ({ ...current, left: event.target.value }))}
                       />
                     </label>
-                    <small>El cilindro se convierte en un tubo con agujero pasante.</small>
+                    <small>{selected.kind === "cylinder" ? "El cilindro se convierte en un tubo con agujero pasante." : "La esfera queda hueca por dentro, con la superficie exterior cerrada."}</small>
                   </>
                 )}
                 <button className="primary-button" onClick={handleHollow}>
