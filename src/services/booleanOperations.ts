@@ -102,7 +102,7 @@ export async function calculateBoolean(objects: ProjectObject[], operation: Bool
     }
 
     const status = result.status();
-    if (status !== wasm.Error.NoError) {
+    if (status !== "NoError") {
       throw new Error("El motor no pudo validar la geometría de entrada. Revisá que las piezas sean sólidos cerrados y se superpongan.");
     }
     if (result.isEmpty()) throw new Error("La operación no produjo un sólido. Revisá que las piezas se superpongan.");
