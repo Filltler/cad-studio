@@ -1,0 +1,64 @@
+import * as THREE from "three";
+import { Brush, Evaluator, ADDITION, SUBTRACTION, INTERSECTION } from "three-bvh-csg";
+import type { ProjectObject } from "../domain/project";
+
+export type BooleanOperation = "union" | "subtract" | "intersect";
+
+function createGeometry(object: ProjectObject): THREE.BufferGeometry {
+  if (object.kind === "box") return new THREE.BoxGeometry(1, 1, 1);
+  if (object.kind === "cylinder") return new THREE.CylinderGeometry(0.5, 0.5, 1, 64);
+  if (object.kind === "sphere") return new THREE.SphereGeometry(0.5, 40, 32);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(object.geometryVertices ?? [], 3));
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function createBrush(object: ProjectObject): Brush {
+  const geometry = createGeometry(object);
+  const brush = new Brush(geometry, new THREE.MeshStandardMaterial());
+  if (object.kind !== "custom") {
+    brush.position.set(object.position.x, object.position.y, object.position.z);
+    brush.scale.set(object.dimensions.x, object.dimensions.y, object.dimensions.z);
+    brush.rotation.set(
+      THREE.MathUtils.degToRad(object.rotation.x),
+      THREE.MathUtils.degToRad(object.rotation.y),
+      THREE.MathUtils.degToRad(object.rotation.z)
+    );
+  }
+  brush.updateMatrixWorld(true);
+  return brush;
+}
+
+export function calculateBoolean(objects: ProjectObject[], operation: BooleanOperation): number[] {
+  if (objects.length < 2) throw new Error("Seleccioná al menos dos piezas.");
+  const evaluator = new Evaluator();
+  evaluator.useGroups = false;
+  let result = createBrush(objects[0]);
+  try {
+    for (const object of objects.slice(1)) {
+      const next = createBrush(object);
+      try {
+        const op = operation === "union" ? ADDITION : operation === "subtract" ? SUBTRACTION : INTERSECTION;
+        const combined = evaluator.evaluate(result, next, op);
+        result.geometry.dispose();
+        result.material.dispose();
+        result = combined;
+      } finally {
+        next.geometry.dispose();
+        next.material.dispose();
+      }
+    }
+    result.updateMatrixWorld(true);
+    const geometry = result.geometry.clone();
+    geometry.applyMatrix4(result.matrixWorld);
+    const position = geometry.getAttribute("position");
+    const vertices = Array.from(position.array as ArrayLike<number>);
+    geometry.dispose();
+    if (vertices.length < 9) throw new Error("La operación no produjo un sólido válido. Revisá que las piezas se superpongan.");
+    return vertices;
+  } finally {
+    result.geometry.dispose();
+    result.material.dispose();
+  }
+}
