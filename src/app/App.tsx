@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import * as THREE from "three";
 import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
 import { Viewport } from "../features/viewport/Viewport";
@@ -16,7 +16,32 @@ export function App() {
   const selectObject = useEditorStore((s) => s.selectObject);
   const updateObject = useEditorStore((s) => s.updateObject);
   const applyBooleanResult = useEditorStore((s) => s.applyBooleanResult);
+  const undo = useEditorStore((s) => s.undo);
+  const redo = useEditorStore((s) => s.redo);
+  const canUndo = useEditorStore((s) => s.past.length > 0);
+  const canRedo = useEditorStore((s) => s.future.length > 0);
   const selected = objects.find((o) => o.id === selectedId);
+
+  useEffect(() => {
+    function handleHistoryShortcut(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (key === "z" && event.shiftKey) {
+        event.preventDefault();
+        redo();
+      } else if (key === "z") {
+        event.preventDefault();
+        undo();
+      } else if (key === "y") {
+        event.preventDefault();
+        redo();
+      }
+    }
+    window.addEventListener("keydown", handleHistoryShortcut);
+    return () => window.removeEventListener("keydown", handleHistoryShortcut);
+  }, [undo, redo]);
 
   function toggleBooleanSelection(id: string) {
     setBooleanSelection((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
@@ -122,6 +147,8 @@ export function App() {
         </div>
         <div className="topbar-spacer" />
         <span className="unit-chip">MM</span>
+        <button className="secondary-button" onClick={undo} disabled={!canUndo} title="Deshacer (Ctrl+Z)">Deshacer</button>
+        <button className="secondary-button" onClick={redo} disabled={!canRedo} title="Rehacer (Ctrl+Y)">Rehacer</button>
         <button className="secondary-button" onClick={() => setAdvanced((v) => !v)}>
           {advanced ? "Modo sencillo" : "Herramientas avanzadas"}
         </button>
