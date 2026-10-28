@@ -4,13 +4,14 @@ import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
 import { Viewport } from "../features/viewport/Viewport";
 import { useEditorStore } from "../features/editor/editorStore";
 import { saveProject } from "../services/storage/projectStorage";
-import { calculateBoolean, type BooleanOperation } from "../services/booleanOperations";
+import { calculateBoolean, calculateHollow, type BooleanOperation } from "../services/booleanOperations";
 
 export function App() {
   const [advanced, setAdvanced] = useState(false);
   const [booleanSelection, setBooleanSelection] = useState<string[]>([]);
   const [viewportMultiSelect, setViewportMultiSelect] = useState(false);
   const [notice, setNotice] = useState("MiCAD · herramientas CAD en desarrollo");
+  const [wallThickness, setWallThickness] = useState(2);
   const objects = useEditorStore((s) => s.objects);
   const selectedId = useEditorStore((s) => s.selectedId);
   const addPrimitive = useEditorStore((s) => s.addPrimitive);
@@ -77,6 +78,26 @@ export function App() {
       setNotice(`Operación ${name.toLowerCase()} completada. Se reemplazaron las piezas seleccionadas.`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "No se pudo completar la operación booleana.");
+    }
+  }
+
+  async function handleHollow() {
+    if (!selected) {
+      setNotice("Seleccioná un cubo o cilindro para vaciarlo.");
+      return;
+    }
+    if (selected.kind !== "box" && selected.kind !== "cylinder") {
+      setNotice("El vaciado está disponible por ahora para cubos y cilindros.");
+      return;
+    }
+    try {
+      setNotice("Generando cavidad y comprobando la malla…");
+      const vertices = await calculateHollow(selected, wallThickness);
+      applyBooleanResult([selected.id], `Vaciado ${selected.name}`, vertices);
+      setBooleanSelection([]);
+      setNotice(`Vaciado completado con paredes de ${wallThickness} mm.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No se pudo vaciar la pieza.");
     }
   }
 
@@ -312,6 +333,32 @@ export function App() {
                     />
                   </label>
                 ))}
+              </div>
+              <div className="property-section">
+                <div className="property-title">Vaciado <span>mm</span></div>
+                <label className="property-row">
+                  <span>Espesor</span>
+                  <input
+                    aria-label="Espesor de pared para vaciado"
+                    type="number"
+                    min="0.1"
+                    max="100"
+                    step="0.1"
+                    value={wallThickness}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      if (Number.isFinite(value) && value > 0) setWallThickness(value);
+                    }}
+                  />
+                </label>
+                <button
+                  className="primary-button"
+                  onClick={handleHollow}
+                  disabled={selected.kind !== "box" && selected.kind !== "cylinder"}
+                >
+                  Vaciar pieza
+                </button>
+                <small>El cubo queda abierto por arriba; el cilindro queda como tubo hueco.</small>
               </div>
               {advanced && (
                 <div className="advanced-note">
