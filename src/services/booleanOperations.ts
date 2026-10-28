@@ -62,7 +62,10 @@ export function calculateBoolean(objects: ProjectObject[], operation: BooleanOpe
       : result.geometry.clone();
     geometry.applyMatrix4(result.matrixWorld);
     const position = geometry.getAttribute("position");
-    const vertices = Array.from(position.array as ArrayLike<number>);
+    // BufferGeometry attributes may retain unused capacity after CSG generation.
+    // Read only the active vertex range, not the entire backing array.
+    const activeLength = position.count * position.itemSize;
+    const vertices = Array.from(position.array as ArrayLike<number>).slice(0, activeLength);
     geometry.dispose();
     if (vertices.length < 9) throw new Error("La operación no produjo un sólido válido. Revisá que las piezas se superpongan.");
     return vertices;
