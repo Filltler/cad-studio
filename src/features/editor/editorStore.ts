@@ -12,6 +12,7 @@ type EditorState = {
   redo: () => void;
   addPrimitive: (kind: Exclude<PrimitiveKind, "custom">) => void;
   selectObject: (id: string | null) => void;
+  deleteObjects: (ids: string[]) => void;
   updateObject: (id: string, patch: Partial<Pick<ProjectObject, "position" | "dimensions" | "rotation" | "booleanRole" | "color">>) => void;
   applyBooleanResult: (objectIds: string[], name: string, vertices: number[]) => void;
   loadProjectObjects: (objects: ProjectObject[]) => void;
@@ -80,6 +81,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     return { ...history, objects: [...state.objects, object], selectedId: object.id };
   }),
   selectObject: (id) => set({ selectedId: id }),
+  deleteObjects: (ids) => set((state) => {
+    const remove = new Set(ids);
+    const next = state.objects.filter((object) => !remove.has(object.id));
+    if (next.length === state.objects.length) return state;
+    const history = transactionStart ? { past: state.past, future: state.future } : { past: [...state.past, cloneObjects(state.objects)].slice(-100), future: [] };
+    return { ...history, objects: next, selectedId: remove.has(state.selectedId ?? "") ? (next[next.length - 1]?.id ?? null) : state.selectedId };
+  }),
   loadProjectObjects: (objects) => {
     transactionStart = null;
     set({ objects: cloneObjects(objects), selectedId: objects[0]?.id ?? null, past: [], future: [] });
