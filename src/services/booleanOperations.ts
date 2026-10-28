@@ -40,6 +40,9 @@ function createWorldGeometry(object: ProjectObject): THREE.BufferGeometry {
     );
     mesh.updateMatrixWorld(true);
     geometry.applyMatrix4(mesh.matrixWorld);
+  } else {
+    // Custom boolean meshes store vertices in world coordinates; apply any later translation.
+    geometry.translate(object.position.x, object.position.y, object.position.z);
   }
   geometry.clearGroups();
   return geometry;
