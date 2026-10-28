@@ -22,7 +22,8 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, preview = nu
   const beginTransaction = useEditorStore((s) => s.beginTransaction);
   const endTransaction = useEditorStore((s) => s.endTransaction);
   const [mode, setMode] = useState<TransformMode>("translate");
-  const meshMap = useRef(new Map<string, THREE.Mesh>());\n  const meshCenterById = useRef(new Map<string, THREE.Vector3>());
+  const meshMap = useRef(new Map<string, THREE.Mesh>());
+  const meshCenterById = useRef(new Map<string, THREE.Vector3>());
   const previewMeshRef = useRef<THREE.Mesh | null>(null);
   const transformRef = useRef<TransformControls | null>(null);
   const orbitRef = useRef<OrbitControls | null>(null);
@@ -267,7 +268,8 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, preview = nu
         if (Array.isArray(material)) material.forEach((m) => m.dispose());
         else material.dispose();
       });
-      meshMap.current.clear();\n      meshCenterById.current.clear();
+      meshMap.current.clear();
+      meshCenterById.current.clear();
       if (previewMeshRef.current) {
         scene.remove(previewMeshRef.current);
         previewMeshRef.current.geometry.dispose();
