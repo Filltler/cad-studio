@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { BooleanRole, ProjectObject, PrimitiveKind, Vector3 } from "../../domain/project";
+import type { ProjectObject, PrimitiveKind, Vector3 } from "../../domain/project";
 
 type EditorState = {
   objects: ProjectObject[];
