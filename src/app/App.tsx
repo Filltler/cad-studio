@@ -23,7 +23,7 @@ export function App() {
   const [cutBusy, setCutBusy] = useState(false);
   const [hollowBusy, setHollowBusy] = useState(false);
   const [interlocksEnabled, setInterlocksEnabled] = useState(false);
-  const [interlockShape, setInterlockShape] = useState<InterlockShape>("round");
+  const [interlockShape, setInterlockShape] = useState<InterlockShape>("elastic");
   const [interlockCount, setInterlockCount] = useState("2");
   const [interlockClearance, setInterlockClearance] = useState("0.25");
   const [projectId, setProjectId] = useState("local-project");
@@ -346,7 +346,7 @@ export function App() {
       setCutEnabled(false);
       setCutPreview(null);
       setNotice(interlocksEnabled
-        ? "Corte confirmado con " + parsedInterlockCount + " encastres " + (interlockShape === "round" ? "redondos" : "cuadrados") + " de " + interlockSuggestion!.diameter.toFixed(1) + " mm y holgura de " + parsedInterlockClearance.toFixed(2) + " mm por lado. Podés deshacerlo."
+        ? "Corte confirmado con " + parsedInterlockCount + " encastres " + (interlockShape === "elastic" ? "elásticos" : interlockShape === "round" ? "guías redondas" : "guías cuadradas") + " de " + interlockSuggestion!.diameter.toFixed(1) + " mm y holgura de " + parsedInterlockClearance.toFixed(2) + " mm por lado. Podés deshacerlo."
         : "Corte confirmado en " + axisLabel + " = " + parsedCutPosition.toFixed(3) + " mm. Se crearon dos objetos independientes; podés deshacerlo.");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "No se pudieron generar las dos partes del corte.");
@@ -836,10 +836,11 @@ export function App() {
                     {interlocksEnabled && (
                       <div className="interlock-options">
                         <label>
-                          <span>Forma</span>
+                          <span>Tipo</span>
                           <select value={interlockShape} onChange={(event) => setInterlockShape(event.target.value as InterlockShape)}>
-                            <option value="round">Redondo</option>
-                            <option value="square">Cuadrado</option>
+                            <option value="elastic">Clip elástico · traba</option>
+                            <option value="round">Guía redonda</option>
+                            <option value="square">Guía cuadrada</option>
                           </select>
                         </label>
                         <label>
@@ -854,7 +855,9 @@ export function App() {
                         </label>
                         <small>
                           {interlockSuggestion?.available
-                            ? "Tamaño automático: " + (interlockShape === "round" ? "Ø" : "lado ") + interlockSuggestion.diameter.toFixed(1) + " mm · profundidad " + interlockSuggestion.depth.toFixed(1) + " mm."
+                            ? (interlockShape === "elastic"
+                              ? "Traba automática: pestaña flexible de " + interlockSuggestion.diameter.toFixed(1) + " mm · profundidad " + interlockSuggestion.depth.toFixed(1) + " mm. Conviene PETG o TPU."
+                              : "Tamaño automático: " + (interlockShape === "round" ? "Ø" : "lado ") + interlockSuggestion.diameter.toFixed(1) + " mm · profundidad " + interlockSuggestion.depth.toFixed(1) + " mm. Las guías alinean, no traban.")
                             : "No hay superficie suficiente para encastres de ese tamaño. Probá con menos piezas o mové el corte."}
                         </small>
                       </div>
