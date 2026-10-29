@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
 import { Viewport } from "../features/viewport/Viewport";
 import { useEditorStore } from "../features/editor/editorStore";
 import { listProjects, loadProject, saveProject } from "../services/storage/projectStorage";
-import { calculateBoolean, calculateHeightCut, calculateHeightSplit, calculateHollow, type BooleanOperation } from "../services/booleanOperations";
+import { calculateBoolean, calculateHeightCut, calculateHeightSplit, calculateHollow, calculateObjectBounds, type BooleanOperation } from "../services/booleanOperations";
+import { parseSTL } from "../services/stlImport";
 
 export function App() {
   const [advanced, setAdvanced] = useState(false);
@@ -22,6 +23,8 @@ export function App() {
   const [projectId, setProjectId] = useState("local-project");
   const [projectName, setProjectName] = useState("Mi primer proyecto");
   const [projects, setProjects] = useState<Array<{ id: string; name: string; updatedAt: string }>>([]);
+  const [stlImportBusy, setStlImportBusy] = useState(false);
+  const stlInputRef = useRef<HTMLInputElement>(null);
   const objects = useEditorStore((s) => s.objects);
   const selectedId = useEditorStore((s) => s.selectedId);
   const addPrimitive = useEditorStore((s) => s.addPrimitive);
@@ -30,6 +33,7 @@ export function App() {
   const updateObject = useEditorStore((s) => s.updateObject);
   const alignObjects = useEditorStore((s) => s.alignObjects);
   const spaceObjects = useEditorStore((s) => s.spaceObjects);
+  const addCustomObject = useEditorStore((s) => s.addCustomObject);
   const applyBooleanResult = useEditorStore((s) => s.applyBooleanResult); 
   const applyHeightSplitResult = useEditorStore((s) => s.applyHeightSplitResult);
   const loadProjectObjects = useEditorStore((s) => s.loadProjectObjects);
@@ -382,6 +386,39 @@ export function App() {
     } catch { setNotice("No se pudo renombrar el proyecto."); }
   }
 
+  async function handleImportSTL(file: File | undefined) {
+    if (!file) return;
+    setStlImportBusy(true);
+    setNotice("Importando archivo STL...");
+    try {
+      const imported = parseSTL(await file.arrayBuffer());
+      const name = file.name.replace(/\.stl$/i, "").trim() || "Malla importada";
+      let rightmost = -Infinity;
+      for (const object of objects) {
+        try {
+          rightmost = Math.max(rightmost, calculateObjectBounds(object).max.x);
+        } catch {
+          rightmost = Math.max(rightmost, object.position.x + object.dimensions.x / 2);
+        }
+      }
+      const position = objects.length
+        ? { x: rightmost + imported.dimensions.x / 2 + 5, y: 0, z: 0 }
+        : { x: 0, y: 0, z: 0 };
+      addCustomObject(name, imported.vertices, position);
+      setBooleanSelection([]);
+      setViewportMultiSelect(false);
+      setNotice(
+        "STL \"" + name + "\" importado en milímetros, apoyado sobre la cama y con la orientación del archivo. Dimensiones: " +
+        roundForDisplay(imported.dimensions.x) + " × " + roundForDisplay(imported.dimensions.y) + " × " + roundForDisplay(imported.dimensions.z) + " mm."
+      );
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No se pudo importar el archivo STL.");
+    } finally {
+      setStlImportBusy(false);
+      if (stlInputRef.current) stlInputRef.current.value = "";
+    }
+  }
+
   function handleExportSTL() {
     if (objects.length === 0) {
       setNotice("Agregá al menos una pieza antes de exportar.");
@@ -459,6 +496,8 @@ export function App() {
         <button className="secondary-button" onClick={() => setAdvanced((v) => !v)}>
           {advanced ? "Modo sencillo" : "Herramientas avanzadas"}
         </button>
+        <button className="secondary-button" onClick={() => stlInputRef.current?.click()} disabled={stlImportBusy}>{stlImportBusy ? "Importando STL…" : "Importar STL"}</button>
+        <input ref={stlInputRef} type="file" accept=".stl,model/stl,application/sla" aria-label="Elegir archivo STL para importar" hidden onChange={(event) => void handleImportSTL(event.currentTarget.files?.[0])} />
         <button className="secondary-button" onClick={handleExportSTL}>Exportar STL</button>
         <button className="primary-button" onClick={handleSave}>Guardar proyecto</button>
       </header>
