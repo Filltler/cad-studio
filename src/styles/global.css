@@ -27,7 +27,17 @@ button { cursor: pointer; }
 .secondary-button { color: #dbeafe; background: #1e293b; border: 1px solid #334155; }
 .workspace { min-height: 0; flex: 1; display: grid; grid-template-columns: 220px minmax(400px, 1fr) 245px; }
 .sidebar, .properties-panel { background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
-.sidebar { border-right: 1px solid var(--panel-border); }
+.sidebar {
+  border-right: 1px solid var(--panel-border);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #334155 #111827;
+}
+.sidebar::-webkit-scrollbar { width: 8px; }
+.sidebar::-webkit-scrollbar-track { background: #111827; }
+.sidebar::-webkit-scrollbar-thumb { border: 2px solid #111827; border-radius: 8px; background: #334155; }
+.sidebar > * { flex-shrink: 0; }
 .properties-panel { border-left: 1px solid var(--panel-border); overflow-y: auto; }
 .properties-panel > .section-heading { position: sticky; top: 0; z-index: 2; background: var(--panel); }
 .section-heading { padding: 19px 15px 11px; color: #a5b4fc; text-transform: uppercase; font-size: 10px; font-weight: 750; letter-spacing: 1px; }
@@ -56,7 +66,7 @@ button { cursor: pointer; }
 .spacing-axis button:disabled { cursor: not-allowed; opacity: .45; }
 .spacing-tools > small { display: block; margin-top: 6px; color: var(--muted); font-size: 9px; line-height: 1.4; }
 
-.object-list { padding: 0 9px; overflow-y: auto; }
+.object-list { padding: 0 9px; }
 .object-row { width: 100%; display: flex; align-items: center; gap: 9px; padding: 10px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: #cbd5e1; text-align: left; font-size: 12px; }
 .object-row.selected { background: #242e4d; border-color: #4f5eaa; color: white; }
 .object-dot { width: 9px; height: 9px; border-radius: 3px; background: #818cf8; }
