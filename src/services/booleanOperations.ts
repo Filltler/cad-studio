@@ -177,10 +177,122 @@ export type HollowWallThickness = {
  * Creates an open-top box with independently configurable wall thicknesses,
  * or a cylindrical tube using the left value as radial wall thickness.
  */
+async function calculateCustomHollow(object: ProjectObject, wallThickness: number): Promise<number[]> {
+  if (!Number.isFinite(wallThickness) || wallThickness <= 0) {
+    throw new Error("El espesor debe ser mayor que 0 mm.");
+  }
+  const sourceVertices = object.geometryVertices ?? [];
+  if (sourceVertices.length < 36 || sourceVertices.length % 9 !== 0 || sourceVertices.some((value) => !Number.isFinite(value))) {
+    throw new Error("La malla personalizada no contiene triángulos cerrados válidos.");
+  }
+
+  const geometry = createWorldGeometry(object);
+  geometry.computeBoundingBox();
+  const bounds = geometry.boundingBox;
+  if (!bounds) {
+    geometry.dispose();
+    throw new Error("No se pudieron calcular los límites de la malla personalizada.");
+  }
+  const size = bounds.getSize(new THREE.Vector3());
+  const minimumExtent = Math.min(size.x, size.y, size.z);
+  if (!Number.isFinite(minimumExtent) || minimumExtent <= 1e-5) {
+    geometry.dispose();
+    throw new Error("La malla personalizada debe tener volumen en las tres dimensiones.");
+  }
+  if (wallThickness * 2 >= minimumExtent - 1e-5) {
+    geometry.dispose();
+    throw new Error("Ese espesor es demasiado grande para el tamaño de la malla personalizada.");
+  }
+
+  let sourceMesh: any = null;
+  let outer: any = null;
+  let offsetSphere: any = null;
+  let inner: any = null;
+  let hollow: any = null;
+  let outputMesh: any = null;
+  try {
+    const wasm = await getManifoldApi();
+    sourceMesh = toManifoldMesh(wasm, geometry);
+    try {
+      outer = new wasm.Manifold(sourceMesh);
+    } catch {
+      throw new Error("La malla personalizada no es un sólido cerrado válido. Revisá la geometría antes de vaciarla.");
+    }
+    const outerStatus = outer.status();
+    if (outerStatus !== "NoError" || outer.isEmpty()) {
+      throw new Error("La malla personalizada no es un sólido cerrado válido. Revisá la geometría antes de vaciarla.");
+    }
+    const outerVolume = outer.volume();
+    if (!Number.isFinite(outerVolume) || outerVolume <= 1e-8) {
+      throw new Error("La malla personalizada no es un sólido cerrado válido. Revisá la geometría antes de vaciarla.");
+    }
+
+    try {
+      offsetSphere = wasm.Manifold.sphere(wallThickness, 32);
+      inner = outer.minkowskiDifference(offsetSphere);
+    } catch {
+      throw new Error("No se pudo calcular el interior de la malla. Probá con un espesor menor.");
+    }
+    const innerStatus = inner.status();
+    if (innerStatus !== "NoError" || inner.isEmpty()) {
+      throw new Error("Ese espesor no deja una cavidad válida dentro de la pieza. Probá con un espesor menor.");
+    }
+    const innerVolume = inner.volume();
+    const volumeTolerance = Math.max(outerVolume * 1e-10, 1e-8);
+    if (!Number.isFinite(innerVolume) || innerVolume <= volumeTolerance || innerVolume >= outerVolume - volumeTolerance) {
+      throw new Error("Ese espesor no deja una cavidad válida dentro de la pieza. Probá con un espesor menor.");
+    }
+
+    hollow = outer.subtract(inner);
+    const hollowStatus = hollow.status();
+    if (hollowStatus !== "NoError" || hollow.isEmpty()) {
+      throw new Error("El vaciado no pasó la validación geométrica. Probá con un espesor menor.");
+    }
+    const hollowVolume = hollow.volume();
+    if (!Number.isFinite(hollowVolume) || hollowVolume <= volumeTolerance || hollowVolume >= outerVolume - volumeTolerance) {
+      throw new Error("El vaciado no pasó la validación geométrica. Probá con un espesor menor.");
+    }
+
+    outputMesh = hollow.getMesh();
+    const properties = outputMesh.vertProperties as ArrayLike<number>;
+    const indices = outputMesh.triVerts as ArrayLike<number>;
+    const propertyStride = outputMesh.numProp as number;
+    if (propertyStride < 3 || indices.length < 12 || indices.length % 3 !== 0) {
+      throw new Error("El motor devolvió una malla vaciada incompleta.");
+    }
+    const flattened: number[] = [];
+    for (let i = 0; i < indices.length; i++) {
+      const offset = indices[i] * propertyStride;
+      flattened.push(properties[offset], properties[offset + 1], properties[offset + 2]);
+    }
+    if (flattened.length < 36 || flattened.some((value) => !Number.isFinite(value))) {
+      throw new Error("El motor devolvió una malla vaciada inválida.");
+    }
+    return flattened;
+  } finally {
+    outputMesh?.delete?.();
+    hollow?.delete?.();
+    inner?.delete?.();
+    offsetSphere?.delete?.();
+    outer?.delete?.();
+    sourceMesh?.delete?.();
+    geometry.dispose();
+  }
+}
+
+/**
+ * Creates a hollow result for supported primitives and custom closed meshes.
+ * Custom meshes use a spherical inward offset and are checked as manifold solids.
+ */
 export async function calculateHollow(
   object: ProjectObject,
   thickness: number | HollowWallThickness
 ): Promise<number[]> {
+  if (object.kind === "custom") {
+    const wallThickness = typeof thickness === "number" ? thickness : thickness.left;
+    return calculateCustomHollow(object, wallThickness);
+  }
+
   if (object.kind === "sphere") {
     const wallThickness = typeof thickness === "number" ? thickness : thickness.left;
     if (!Number.isFinite(wallThickness) || wallThickness <= 0) {
@@ -263,6 +375,7 @@ export async function calculateHollow(
   };
   return calculateBoolean([object, cutter], "subtract");
 }
+
 
 
 /**
