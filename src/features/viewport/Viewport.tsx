@@ -235,7 +235,7 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
       if (event.button === 0 && event.shiftKey && !previewRef.current) {
         const objectHit = raycaster.intersectObjects([...meshMap.current.values()], false)[0];
         const dimensionHandleHit = raycaster.intersectObjects(dimensionHandles.current, false)[0];
-        const transformHandleHit = raycaster.intersectObject(transform.getHelper(), true)[0];
+        const transformHandleHit = Boolean(transform.object && transform.axis);
         if (!objectHit && !dimensionHandleHit && !transformHandleHit) {
           const start = clampToCanvas(event.clientX, event.clientY);
           selectionDragRef.current = { pointerId: event.pointerId, startX: start.x, startY: start.y };
