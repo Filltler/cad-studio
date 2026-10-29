@@ -9,11 +9,14 @@ type TransformMode = "translate" | "rotate" | "scale";
 type CutPlaneSpec = {
   objectId: string;
   axis: CutAxis;
+  normal: [number, number, number];
+  tilted: boolean;
   position: number;
   bounds: { min: [number, number, number]; max: [number, number, number] };
 };
 type ViewportProps = {
   multiSelectMode?: boolean;
+  multiSelectedIds?: string[];
   onObjectSelect?: (id: string | null, additive: boolean) => void;
   onObjectsMarqueeSelect?: (ids: string[], additive: boolean) => void;
   preview?: { objectId: string; vertices: number[] } | null;
@@ -27,13 +30,14 @@ const modeLabels: Record<TransformMode, string> = {
   scale: "Escalar"
 };
 
-export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMarqueeSelect, preview = null, cutPlane = null, onCutPositionChange }: ViewportProps) {
+export function Viewport({ multiSelectMode = false, multiSelectedIds = [], onObjectSelect, onObjectsMarqueeSelect, preview = null, cutPlane = null, onCutPositionChange }: ViewportProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const selectionBoxRef = useRef<HTMLDivElement>(null);
   const objects = useEditorStore((s) => s.objects);
   const selectedId = useEditorStore((s) => s.selectedId);
   const selectObject = useEditorStore((s) => s.selectObject);
   const updateObject = useEditorStore((s) => s.updateObject);
+  const updateObjectsPositions = useEditorStore((s) => s.updateObjectsPositions);
   const beginTransaction = useEditorStore((s) => s.beginTransaction);
   const endTransaction = useEditorStore((s) => s.endTransaction);
   const [mode, setMode] = useState<TransformMode>("translate");
@@ -42,11 +46,14 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
   const previewMeshRef = useRef<THREE.Mesh | null>(null);
   const cutPlaneGroupRef = useRef<THREE.Group | null>(null);
   const cutPlaneSurfaceRef = useRef<THREE.Mesh | null>(null);
+  const multiMoveGroupRef = useRef<THREE.Group | null>(null);
   const transformRef = useRef<TransformControls | null>(null);
   const orbitRef = useRef<OrbitControls | null>(null);
   const objectsRef = useRef(objects);
   const selectedIdRef = useRef(selectedId);
   const multiSelectModeRef = useRef(multiSelectMode);
+  const multiSelectedIdsRef = useRef(multiSelectedIds);
+  const multiMoveDragRef = useRef<{ startCenter: THREE.Vector3; startPositions: Record<string, { x: number; y: number; z: number }> } | null>(null);
   const onObjectSelectRef = useRef(onObjectSelect);
   const onObjectsMarqueeSelectRef = useRef(onObjectsMarqueeSelect);
   const previewRef = useRef(preview);
@@ -56,6 +63,7 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
   objectsRef.current = objects;
   selectedIdRef.current = selectedId;
   multiSelectModeRef.current = multiSelectMode;
+  multiSelectedIdsRef.current = multiSelectedIds;
   onObjectSelectRef.current = onObjectSelect;
   onObjectsMarqueeSelectRef.current = onObjectsMarqueeSelect;
   previewRef.current = preview;
@@ -121,6 +129,10 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
     scene.add(cutPlaneGroup);
     cutPlaneGroupRef.current = cutPlaneGroup;
     cutPlaneSurfaceRef.current = cutPlaneSurface;
+    const multiMoveGroup = new THREE.Group();
+    multiMoveGroup.userData.multiMoveHandle = true;
+    scene.add(multiMoveGroup);
+    multiMoveGroupRef.current = multiMoveGroup;
 
     // Six face-center handles for direct dimension editing in Scale mode.
     const handleMaterial = [
@@ -144,15 +156,43 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
 
     transform.addEventListener("dragging-changed", (event) => {
       controls.enabled = !event.value;
-      if (transform.object?.userData.cutPlaneHandle) return;
+      const activeObject = transform.object;
+      if (activeObject?.userData.cutPlaneHandle) return;
+      if (activeObject?.userData.multiMoveHandle) {
+        if (event.value) {
+          beginTransaction();
+          const positions: Record<string, { x: number; y: number; z: number }> = {};
+          const objectsById = new Map(objectsRef.current.map((object) => [object.id, object]));
+          for (const id of multiSelectedIdsRef.current) {
+            const object = objectsById.get(id);
+            if (object) positions[id] = { ...object.position };
+          }
+          multiMoveDragRef.current = { startCenter: activeObject.position.clone(), startPositions: positions };
+        } else {
+          multiMoveDragRef.current = null;
+          endTransaction();
+        }
+        return;
+      }
       if (event.value) beginTransaction();
       else endTransaction();
     });
     transform.addEventListener("objectChange", () => {
       const activeObject = transform.object;
       if (activeObject?.userData.cutPlaneHandle) {
-        const axis = cutPlaneRef.current?.axis;
-        if (axis) onCutPositionChangeRef.current?.(activeObject.position[axis]);
+        const normal = cutPlaneRef.current?.normal;
+        if (normal) onCutPositionChangeRef.current?.(activeObject.position.x * normal[0] + activeObject.position.y * normal[1] + activeObject.position.z * normal[2]);
+        return;
+      }
+      if (activeObject?.userData.multiMoveHandle) {
+        const drag = multiMoveDragRef.current;
+        if (!drag) return;
+        const delta = activeObject.position.clone().sub(drag.startCenter);
+        const positions: Record<string, { x: number; y: number; z: number }> = {};
+        for (const [id, start] of Object.entries(drag.startPositions)) {
+          positions[id] = { x: start.x + delta.x, y: start.y + delta.y, z: start.z + delta.z };
+        }
+        updateObjectsPositions(positions);
         return;
       }
       const mesh = activeObject as THREE.Mesh | undefined;
@@ -465,6 +505,11 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
         cutPlaneGroupRef.current = null;
         cutPlaneSurfaceRef.current = null;
       }
+      if (multiMoveGroupRef.current) {
+        transform.detach();
+        scene.remove(multiMoveGroupRef.current);
+        multiMoveGroupRef.current = null;
+      }
       delete (host as HTMLDivElement & { __cadScene?: THREE.Scene }).__cadScene;
       renderer.dispose();
       renderer.domElement.remove();
@@ -477,15 +522,26 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
     const selected = selectedIdRef.current ? meshMap.current.get(selectedIdRef.current) : undefined;
     const activeCutPlane = cutPlaneRef.current;
     const cutGroup = cutPlaneGroupRef.current;
+    const multiGroup = multiMoveGroupRef.current;
+    const multiCount = multiSelectedIdsRef.current.filter((id) => meshMap.current.has(id)).length;
+    const activeMultiMove = !activeCutPlane && mode === "translate" && multiCount >= 2;
     if (transform) {
       if (activeCutPlane && cutGroup?.visible) {
         if (transform.getMode() !== "translate") transform.setMode("translate");
         if (transform.space !== "world") transform.setSpace("world");
-        transform.showX = activeCutPlane.axis === "x";
-        transform.showY = activeCutPlane.axis === "y";
-        transform.showZ = activeCutPlane.axis === "z";
+        transform.showX = activeCutPlane.tilted || activeCutPlane.axis === "x";
+        transform.showY = activeCutPlane.tilted || activeCutPlane.axis === "y";
+        transform.showZ = activeCutPlane.tilted || activeCutPlane.axis === "z";
         transform.getHelper().visible = true;
         if (transform.object !== cutGroup) transform.attach(cutGroup);
+      } else if (activeMultiMove && multiGroup) {
+        if (transform.getMode() !== "translate") transform.setMode("translate");
+        if (transform.space !== "world") transform.setSpace("world");
+        transform.showX = true;
+        transform.showY = true;
+        transform.showZ = true;
+        transform.getHelper().visible = true;
+        if (transform.object !== multiGroup) transform.attach(multiGroup);
       } else {
         transform.setSpace("local");
         transform.showX = true;
@@ -498,9 +554,9 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
       }
     }
     dimensionHandles.current.forEach((handle) => {
-      handle.visible = Boolean(selected && mode === "scale" && !activeCutPlane);
+      handle.visible = Boolean(selected && mode === "scale" && !activeCutPlane && !activeMultiMove);
     });
-    if (selected && !activeCutPlane) {
+    if (selected && !activeCutPlane && !activeMultiMove) {
       selected.updateMatrixWorld(true);
       dimensionHandles.current.forEach((handle) => {
         const axis = handle.userData.axis as "x" | "y" | "z";
@@ -513,7 +569,7 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
         handle.position.copy(selected.localToWorld(localPoint));
       });
     }
-  }, [mode]);
+  }, [mode, multiSelectedIds]);
   useEffect(() => {
     const host = hostRef.current;
     if (!host?.querySelector("canvas")) return;
@@ -584,6 +640,9 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
 
     const selectedMesh = selectedId ? existing.get(selectedId) : undefined;
     const activeCutPlane = cutPlane && cutPlane.objectId === selectedId ? cutPlane : null;
+    const selectedForMultiMove = multiSelectedIds.filter((id) => existing.has(id));
+    const activeMultiMove = !activeCutPlane && modeRef.current === "translate" && selectedForMultiMove.length >= 2;
+    const multiMoveGroup = multiMoveGroupRef.current;
     existing.forEach((mesh, id) => { mesh.visible = !(preview && id === preview.objectId); });
     if (preview) {
       let previewMesh = previewMeshRef.current;
@@ -608,34 +667,49 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
     if (cutGroup && cutSurface && activeCutPlane) {
       const minimum = new THREE.Vector3(...activeCutPlane.bounds.min);
       const maximum = new THREE.Vector3(...activeCutPlane.bounds.max);
-      const center = minimum.clone().add(maximum).multiplyScalar(0.5);
-      center[activeCutPlane.axis] = activeCutPlane.position;
+      const direction = new THREE.Vector3(...activeCutPlane.normal).normalize();
+      const boundsCenter = minimum.clone().add(maximum).multiplyScalar(0.5);
+      const center = boundsCenter.addScaledVector(direction, activeCutPlane.position - boundsCenter.dot(direction));
       cutGroup.position.copy(center);
-      const size = maximum.sub(minimum);
-      if (activeCutPlane.axis === "x") {
-        cutSurface.rotation.set(0, Math.PI / 2, 0);
-        cutSurface.scale.set(size.z, size.y, 1);
-      } else if (activeCutPlane.axis === "y") {
-        cutSurface.rotation.set(Math.PI / 2, 0, 0);
-        cutSurface.scale.set(size.x, size.z, 1);
-      } else {
-        cutSurface.rotation.set(0, 0, 0);
-        cutSurface.scale.set(size.x, size.y, 1);
-      }
+      cutGroup.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), direction);
+      cutSurface.rotation.set(0, 0, 0);
+      const span = maximum.sub(minimum).length() * 2 + 2;
+      cutSurface.scale.set(span, span, 1);
       cutGroup.visible = true;
       cutGroup.updateMatrixWorld(true);
       if (transformRef.current) {
         const transform = transformRef.current;
         if (transform.getMode() !== "translate") transform.setMode("translate");
         if (transform.space !== "world") transform.setSpace("world");
-        transform.showX = activeCutPlane.axis === "x";
-        transform.showY = activeCutPlane.axis === "y";
-        transform.showZ = activeCutPlane.axis === "z";
+        transform.showX = activeCutPlane.tilted || activeCutPlane.axis === "x";
+        transform.showY = activeCutPlane.tilted || activeCutPlane.axis === "y";
+        transform.showZ = activeCutPlane.tilted || activeCutPlane.axis === "z";
         transform.getHelper().visible = true;
         if (transform.object !== cutGroup) transform.attach(cutGroup);
       }
+    } else if (activeMultiMove && multiMoveGroup) {
+      if (cutGroup) cutGroup.visible = false;
+      const selectionBounds = new THREE.Box3();
+      for (const id of selectedForMultiMove) {
+        const mesh = existing.get(id);
+        if (mesh) selectionBounds.expandByObject(mesh);
+      }
+      if (!selectionBounds.isEmpty()) multiMoveGroup.position.copy(selectionBounds.getCenter(new THREE.Vector3()));
+      multiMoveGroup.visible = true;
+      multiMoveGroup.updateMatrixWorld(true);
+      if (transformRef.current) {
+        const transform = transformRef.current;
+        if (transform.getMode() !== "translate") transform.setMode("translate");
+        if (transform.space !== "world") transform.setSpace("world");
+        transform.showX = true;
+        transform.showY = true;
+        transform.showZ = true;
+        transform.getHelper().visible = true;
+        if (transform.object !== multiMoveGroup) transform.attach(multiMoveGroup);
+      }
     } else {
       if (cutGroup) cutGroup.visible = false;
+      if (multiMoveGroup) multiMoveGroup.visible = false;
       if (transformRef.current) {
         transformRef.current.setSpace("local");
         transformRef.current.showX = true;
@@ -649,9 +723,9 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
     }
 
     dimensionHandles.current.forEach((handle) => {
-      handle.visible = Boolean(selectedMesh && modeRef.current === "scale" && !activeCutPlane);
+      handle.visible = Boolean(selectedMesh && modeRef.current === "scale" && !activeCutPlane && !activeMultiMove);
     });
-    if (selectedMesh && !activeCutPlane && !preview) {
+    if (selectedMesh && !activeCutPlane && !activeMultiMove && !preview) {
       selectedMesh.updateMatrixWorld(true);
       dimensionHandles.current.forEach((handle) => {
         const axis = handle.userData.axis as "x" | "y" | "z";
@@ -664,7 +738,7 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
         handle.position.copy(selectedMesh.localToWorld(localPoint));
       });
     }
-  }, [objects, selectedId, preview, cutPlane]);
+  }, [objects, selectedId, preview, cutPlane, multiSelectedIds, mode]);
 
   return (
     <div className="viewport-stage">
@@ -681,7 +755,7 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
             {key === "translate" ? "↔" : key === "rotate" ? "⟳" : "⤢"} {modeLabels[key]}
           </button>
         ))}
-        <span className="transform-hint">Seleccioná una pieza y arrastrá los controles</span>
+        <span className="transform-hint">{multiSelectedIds.filter((id) => objectsRef.current.some((object) => object.id === id)).length > 1 && mode === "translate" ? "Arrastrá un eje para mover todas las piezas seleccionadas" : "Seleccioná una pieza y arrastrá los controles"}</span>
       </div>
       <div className="viewport-canvas" ref={hostRef}>
         <div ref={selectionBoxRef} className="selection-marquee" aria-hidden="true" />
@@ -689,4 +763,3 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
     </div>
   );
 }
-
