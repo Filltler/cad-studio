@@ -44,6 +44,18 @@ button { cursor: pointer; }
 .alignment-axis b { color: #a5b4fc; font-size: 10px; }
 .alignment-axis button { min-width: 0; padding: 5px 2px; font-size: 9px; }
 .alignment-axis button:disabled { cursor: not-allowed; opacity: .45; }
+
+.spacing-tools { margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--panel-border); }
+.spacing-tools > b { display: block; margin-bottom: 6px; color: #cbd5e1; font-size: 10px; }
+.spacing-gap-row { display: grid; grid-template-columns: 82px 1fr; align-items: center; gap: 5px; margin: 6px 0; }
+.spacing-gap-row > span { color: var(--muted); font-size: 9px; }
+.spacing-gap-row input { min-width: 0; width: 100%; border: 1px solid #334155; border-radius: 6px; padding: 5px; color: #e2e8f0; background: #0b1220; font-size: 10px; }
+.spacing-axis { display: grid; grid-template-columns: 16px repeat(2, minmax(0, 1fr)); align-items: center; gap: 4px; margin: 4px 0; }
+.spacing-axis b { color: #a5b4fc; font-size: 10px; }
+.spacing-axis button { min-width: 0; padding: 5px 2px; font-size: 9px; }
+.spacing-axis button:disabled { cursor: not-allowed; opacity: .45; }
+.spacing-tools > small { display: block; margin-top: 6px; color: var(--muted); font-size: 9px; line-height: 1.4; }
+
 .object-list { padding: 0 9px; overflow-y: auto; }
 .object-row { width: 100%; display: flex; align-items: center; gap: 9px; padding: 10px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: #cbd5e1; text-align: left; font-size: 12px; }
 .object-row.selected { background: #242e4d; border-color: #4f5eaa; color: white; }

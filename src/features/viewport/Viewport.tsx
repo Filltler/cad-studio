@@ -203,7 +203,7 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, preview = nu
       }
       const hits = raycaster.intersectObjects([...meshMap.current.values()], false);
       const hitId = (hits[0]?.object.userData.objectId as string | undefined) ?? null;
-      if (onObjectSelectRef.current) onObjectSelectRef.current(hitId, multiSelectModeRef.current && hitId !== null);
+      if (onObjectSelectRef.current) onObjectSelectRef.current(hitId, hitId !== null && (event.shiftKey || event.ctrlKey || event.metaKey || multiSelectModeRef.current));
       else selectObject(hitId);
     };
     const onPointerMove = (event: PointerEvent) => {

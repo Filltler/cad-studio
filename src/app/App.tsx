@@ -10,6 +10,7 @@ export function App() {
   const [advanced, setAdvanced] = useState(false);
   const [booleanSelection, setBooleanSelection] = useState<string[]>([]);
   const [alignmentOpen, setAlignmentOpen] = useState(false);
+  const [spacingGap, setSpacingGap] = useState("10");
   const [viewportMultiSelect, setViewportMultiSelect] = useState(false);
   const [notice, setNotice] = useState("MiCAD · herramientas CAD en desarrollo");
   const [wallThicknesses, setWallThicknesses] = useState({ left: "2", right: "2", front: "2", back: "2", bottom: "2" });
@@ -28,6 +29,7 @@ export function App() {
   const deleteObjects = useEditorStore((s) => s.deleteObjects);
   const updateObject = useEditorStore((s) => s.updateObject);
   const alignObjects = useEditorStore((s) => s.alignObjects);
+  const spaceObjects = useEditorStore((s) => s.spaceObjects);
   const applyBooleanResult = useEditorStore((s) => s.applyBooleanResult); 
   const applyHeightSplitResult = useEditorStore((s) => s.applyHeightSplitResult);
   const loadProjectObjects = useEditorStore((s) => s.loadProjectObjects);
@@ -151,6 +153,34 @@ export function App() {
         : "Las piezas ya estaban alineadas por " + modeLabel + " en " + axis.toUpperCase() + ".");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "No se pudieron alinear las piezas.");
+    }
+  }
+
+  function handleSpace(axis: "x" | "y" | "z", mode: "fixed" | "uniform") {
+    const selectedCount = objects.filter((object) => booleanSelection.includes(object.id)).length;
+    if (selectedCount < 2) {
+      setNotice("Marcá al menos dos piezas para distribuirlas.");
+      return;
+    }
+    if (mode === "uniform" && selectedCount < 3) {
+      setNotice("La distribución uniforme necesita al menos tres piezas.");
+      return;
+    }
+    const gap = Number(spacingGap);
+    if (mode === "fixed" && (!spacingGap.trim() || !Number.isFinite(gap) || gap < 0)) {
+      setNotice("La separación debe ser un número igual o mayor que 0 mm.");
+      return;
+    }
+    try {
+      const positionsBefore = new Map(objects.filter((object) => booleanSelection.includes(object.id)).map((object) => [object.id, object.position[axis]]));
+      spaceObjects(booleanSelection, axis, mode, mode === "fixed" ? gap : 0);
+      const changed = useEditorStore.getState().objects.some((object) => positionsBefore.has(object.id) && positionsBefore.get(object.id) !== object.position[axis]);
+      const actionLabel = mode === "fixed" ? "separación de " + gap + " mm" : "distribución uniforme";
+      setNotice(changed
+        ? "Piezas organizadas en " + axis.toUpperCase() + " con " + actionLabel + ". Podés deshacerlo."
+        : "Las piezas ya tenían ese espaciado en " + axis.toUpperCase() + ".");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No se pudieron espaciar las piezas.");
     }
   }
 
@@ -435,7 +465,7 @@ export function App() {
 
           <div className="section-heading object-heading">Objetos del proyecto <span>{objects.length}</span></div>
           <div className="boolean-tools">
-            <small>{viewportMultiSelect ? "Tocá piezas en el área 3D para agregarlas o quitarlas de la selección." : "Marcá piezas para combinarlas, cortarlas o alinearlas."}</small>
+            <small>{viewportMultiSelect ? "Tocá piezas en el área 3D para agregarlas o quitarlas de la selección." : "Marcá casillas o usá Shift+clic en 3D para sumar o quitar piezas."}</small>
             <button className={`secondary-button ${viewportMultiSelect ? "active" : ""}`} onClick={() => setViewportMultiSelect((active) => !active)} aria-pressed={viewportMultiSelect}>
               {viewportMultiSelect ? "Finalizar selección 3D" : "Seleccionar piezas en 3D"}
             </button>
@@ -466,6 +496,33 @@ export function App() {
                     })}
                   </div>
                 ))}
+                <div className="spacing-tools">
+                  <b>Espaciado entre piezas</b>
+                  <label className="spacing-gap-row">
+                    <span>Hueco fijo · mm</span>
+                    <input aria-label="Separación fija entre piezas en milímetros" type="number" min="0" step="0.1" value={spacingGap} onChange={(event) => setSpacingGap(event.target.value)} />
+                  </label>
+                  {(["x", "y", "z"] as const).map((axis) => (
+                    <div className="spacing-axis" key={axis}>
+                      <b>{axis.toUpperCase()}</b>
+                      <button
+                        className="secondary-button"
+                        disabled={booleanSelection.length < 2}
+                        title={"Dejar " + spacingGap + " mm entre piezas en " + axis.toUpperCase()}
+                        aria-label={"Separación fija en " + axis.toUpperCase()}
+                        onClick={() => handleSpace(axis, "fixed")}
+                      >Fijo</button>
+                      <button
+                        className="secondary-button"
+                        disabled={booleanSelection.length < 3}
+                        title={"Distribuir con huecos iguales en " + axis.toUpperCase() + " (mínimo tres piezas)"}
+                        aria-label={"Distribución uniforme en " + axis.toUpperCase()}
+                        onClick={() => handleSpace(axis, "uniform")}
+                      >Uniforme</button>
+                    </div>
+                  ))}
+                  <small>Fijo conserva la primera pieza; uniforme mantiene los extremos y reparte los huecos iguales.</small>
+                </div>
               </div>
             )}
           </div>
@@ -654,4 +711,3 @@ export function App() {
     </main>
   );
 }
-
