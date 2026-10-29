@@ -4,7 +4,7 @@ import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
 import { Viewport } from "../features/viewport/Viewport";
 import { useEditorStore } from "../features/editor/editorStore";
 import { listProjects, loadProject, saveProject } from "../services/storage/projectStorage";
-import { addInterlocksToPlanarSplit, calculateBoolean, calculatePlanarCut, calculatePlanarSplit, calculateHollow, calculateObjectBounds, getPlanarCutFaceBounds, suggestPlanarInterlocks, type BooleanOperation, type CutAxis, type InterlockShape } from "../services/booleanOperations";
+import { addInterlocksToPlanarSplit, calculateBoolean, calculatePlanarCut, calculatePlanarSplit, calculateHollow, calculateObjectBounds, calculateObjectProjectionBounds, getCutPlaneNormal, getPlanarCutFaceBounds, suggestPlanarInterlocks, type BooleanOperation, type CutAxis, type CutTilt, type InterlockShape } from "../services/booleanOperations";
 import { parseSTL } from "../services/stlImport";
 
 export function App() {
@@ -18,6 +18,7 @@ export function App() {
   const [numericDraft, setNumericDraft] = useState<Record<string, string>>({});
   const [cutEnabled, setCutEnabled] = useState(false);
   const [cutAxis, setCutAxis] = useState<CutAxis>("y");
+  const [cutTilt, setCutTilt] = useState<CutTilt>({ x: 0, y: 0, z: 0 });
   const [cutPosition, setCutPosition] = useState("17");
   const [cutPreview, setCutPreview] = useState<{ objectId: string; vertices: number[] } | null>(null);
   const [cutBusy, setCutBusy] = useState(false);
@@ -54,39 +55,55 @@ export function App() {
     try { return calculateObjectBounds(selected); }
     catch { return null; }
   }, [selected]);
-  const cutExtent = cutBounds ? cutBounds.max[cutAxis] - cutBounds.min[cutAxis] : 0;
+  const cutTiltAxes: Record<CutAxis, [CutAxis, CutAxis]> = { x: ["y", "z"], y: ["x", "z"], z: ["x", "y"] };
+  const cutNormal = useMemo(() => getCutPlaneNormal(cutAxis, cutTilt), [cutAxis, cutTilt.x, cutTilt.y, cutTilt.z]);
+  const cutTilted = cutTiltAxes[cutAxis].some((axis) => Math.abs(cutTilt[axis]) > 1e-6);
+  const cutProjectionBounds = useMemo(() => {
+    if (!selected) return null;
+    try { return calculateObjectProjectionBounds(selected, cutNormal); }
+    catch { return null; }
+  }, [selected, cutNormal]);
+  const cutExtent = cutProjectionBounds ? cutProjectionBounds.max - cutProjectionBounds.min : 0;
   const cutEpsilon = Math.max(cutExtent * 1e-6, 1e-5);
-  const cutMinimum = cutBounds ? cutBounds.min[cutAxis] + cutEpsilon * 2 : 0;
-  const cutMaximum = cutBounds ? cutBounds.max[cutAxis] - cutEpsilon * 2 : 0;
+  const cutMinimum = cutProjectionBounds ? cutProjectionBounds.min + cutEpsilon * 2 : 0;
+  const cutMaximum = cutProjectionBounds ? cutProjectionBounds.max - cutEpsilon * 2 : 0;
   const parsedCutPosition = Number(cutPosition);
-  const cutPositionValid = Boolean(cutBounds && cutMaximum > cutMinimum && cutPosition.trim() && Number.isFinite(parsedCutPosition) && parsedCutPosition >= cutMinimum && parsedCutPosition <= cutMaximum);
+  const cutPositionValid = Boolean(cutProjectionBounds && cutMaximum > cutMinimum && cutPosition.trim() && Number.isFinite(parsedCutPosition) && parsedCutPosition >= cutMinimum && parsedCutPosition <= cutMaximum);
   const cutAxisLabels: Record<CutAxis, string> = { x: "X · Lateral", y: "Y · Altura", z: "Z · Profundidad" };
   const boundedCutPosition = (value: number) => {
-    if (!Number.isFinite(value) || !cutBounds || cutMaximum <= cutMinimum) return;
+    if (!Number.isFinite(value) || !cutProjectionBounds || cutMaximum <= cutMinimum) return;
     setCutPosition(String(roundForDisplay(Math.min(cutMaximum, Math.max(cutMinimum, value)))));
   };
+  const updateCutTilt = (axis: CutAxis, value: number) => {
+    if (!Number.isFinite(value)) return;
+    setCutTilt((current) => ({ ...current, [axis]: Math.max(-80, Math.min(80, value)) }));
+    setInterlocksEnabled(false);
+  };
   const cutPlaneSpec = useMemo(() => {
-    if (!cutEnabled || !selected || !cutBounds) return null;
+    if (!cutEnabled || !selected || !cutBounds || !cutProjectionBounds) return null;
     return {
       objectId: selected.id,
       axis: cutAxis,
-      position: cutPositionValid ? parsedCutPosition : (cutBounds.min[cutAxis] + cutBounds.max[cutAxis]) / 2,
+      normal: cutNormal,
+      tilted: cutTilted,
+      position: cutPositionValid ? parsedCutPosition : (cutProjectionBounds.min + cutProjectionBounds.max) / 2,
       bounds: {
         min: [cutBounds.min.x, cutBounds.min.y, cutBounds.min.z] as [number, number, number],
         max: [cutBounds.max.x, cutBounds.max.y, cutBounds.max.z] as [number, number, number]
       }
     };
-  }, [cutEnabled, selected, cutBounds, cutAxis, cutPositionValid, parsedCutPosition]);
+  }, [cutEnabled, selected, cutBounds, cutProjectionBounds, cutAxis, cutNormal, cutTilted, cutPositionValid, parsedCutPosition]);
   const cutFaceBounds = useMemo(() => {
-    if (!cutPreview || cutPreview.objectId !== selectedId || !cutPositionValid) return null;
+    if (cutTilted || !cutPreview || cutPreview.objectId !== selectedId || !cutPositionValid) return null;
     return getPlanarCutFaceBounds(cutPreview.vertices, cutAxis, parsedCutPosition);
-  }, [cutPreview, selectedId, cutAxis, parsedCutPosition, cutPositionValid]);
+  }, [cutPreview, selectedId, cutAxis, parsedCutPosition, cutPositionValid, cutTilted]);
   const parsedInterlockCount = Number(interlockCount);
   const parsedInterlockClearance = Number(interlockClearance);
-  const interlockSuggestion = cutBounds
-    ? suggestPlanarInterlocks(cutFaceBounds, cutBounds, cutAxis, parsedCutPosition, parsedInterlockCount)
+  const interlockSuggestion = cutBounds && !cutTilted
+    ? suggestPlanarInterlocks(cutFaceBounds, cutBounds, cutAxis, parsedCutPosition, parsedInterlockCount, interlockShape, parsedInterlockClearance)
     : null;
   const interlockClearanceValid = Number.isFinite(parsedInterlockClearance) && parsedInterlockClearance >= 0.1 && parsedInterlockClearance <= 1;
+  const cutCanUseInterlocks = Boolean(!cutTilted && interlockSuggestion?.available && interlockClearanceValid);
 
   const getBedBaseY = (object: typeof objects[number]) => {
     if (object.kind !== "custom") return object.position.y - object.dimensions.y / 2;
@@ -129,7 +146,7 @@ export function App() {
       return;
     }
     setCutPosition(String(roundForDisplay((cutBounds.min[cutAxis] + cutBounds.max[cutAxis]) / 2)));
-  }, [selectedId, cutAxis, cutBounds]);
+  }, [selectedId, cutAxis, cutProjectionBounds]);
 
   useEffect(() => {
     if (!cutEnabled || !selected || !cutPositionValid) {
@@ -143,7 +160,7 @@ export function App() {
     setCutBusy(false);
     const timer = window.setTimeout(() => {
       setCutBusy(true);
-      calculatePlanarCut(selected, cutAxis, parsedCutPosition, controller.signal)
+      calculatePlanarCut(selected, cutAxis, parsedCutPosition, controller.signal, cutTilt)
         .then((vertices) => {
           if (active) setCutPreview({ objectId: selected.id, vertices });
         })
@@ -156,7 +173,7 @@ export function App() {
         .finally(() => { if (active) setCutBusy(false); });
     }, 300);
     return () => { active = false; controller.abort(); window.clearTimeout(timer); };
-  }, [cutEnabled, selectedId, cutAxis, cutPosition, cutPositionValid, objects]);
+  }, [cutEnabled, selectedId, cutAxis, cutTilt, cutPosition, cutPositionValid, objects]);
 
   const refreshProjects = useCallback(async () => {
     const saved = await listProjects();
@@ -264,7 +281,11 @@ export function App() {
 
   const handleViewportObjectSelect = useCallback((id: string | null, additive: boolean) => {
     selectObject(id);
-    if (id && additive) {
+    if (!additive) {
+      setBooleanSelection([]);
+      return;
+    }
+    if (id) {
       setBooleanSelection((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
     }
   }, [selectObject]);
@@ -309,22 +330,23 @@ export function App() {
     setNotice("Vista previa de corte cancelada; la pieza original no se modificó.");
   }
 
-  async function confirmPlanarCut() {
+  async function confirmPlanarCut(withoutInterlocks = false) {
     if (!selected || !cutPreview || cutPreview.objectId !== selected.id || cutBusy || !cutPositionValid) {
       setNotice("Esperá a que la vista previa del corte esté lista.");
       return;
     }
-    if (interlocksEnabled && (!cutBounds || !interlockSuggestion?.available || !interlockClearanceValid)) {
-      setNotice("No hay espacio suficiente para esos encastres. Probá con menos encastres, revisá la holgura o mové el corte.");
+    const addInterlocks = interlocksEnabled && !withoutInterlocks;
+    if (addInterlocks && (!cutBounds || !cutCanUseInterlocks)) {
+      setNotice("En esta sección no entran los encastres seleccionados. Podés confirmar el corte sin encastres.");
       return;
     }
     setCutBusy(true);
     const axisLabel = cutAxis.toUpperCase();
-    setNotice(interlocksEnabled ? "Calculando el corte y los encastres…" : "Calculando las dos partes del corte…");
+    setNotice(addInterlocks ? "Calculando el corte y los encastres…" : "Calculando las dos partes del corte…");
     try {
-      const cutParts = await calculatePlanarSplit(selected, cutAxis, parsedCutPosition);
+      const cutParts = await calculatePlanarSplit(selected, cutAxis, parsedCutPosition, cutTilt);
       let parts = cutParts;
-      if (interlocksEnabled && cutBounds) {
+      if (addInterlocks && cutBounds) {
         parts = await addInterlocksToPlanarSplit(
           cutParts,
           cutAxis,
@@ -335,19 +357,20 @@ export function App() {
           parsedInterlockClearance
         );
       }
-      let negativeLabel = cutAxis === "y" ? "inferior" : "lado −" + axisLabel;
-      let positiveLabel = cutAxis === "y" ? "superior" : "lado +" + axisLabel;
-      if (interlocksEnabled) {
+      let negativeLabel = cutTilted ? "lado − del plano" : cutAxis === "y" ? "inferior" : "lado −" + axisLabel;
+      let positiveLabel = cutTilted ? "lado + del plano" : cutAxis === "y" ? "superior" : "lado +" + axisLabel;
+      if (addInterlocks) {
         negativeLabel += " · macho";
         positiveLabel += " · hembra";
       }
-      applyPlanarSplitResult(selected.id, "Corte " + axisLabel + " · " + selected.name, parts.negative, parts.positive, negativeLabel, positiveLabel);
+      const cutName = cutTilted ? "Corte inclinado · " + selected.name : "Corte " + axisLabel + " · " + selected.name;
+      applyPlanarSplitResult(selected.id, cutName, parts.negative, parts.positive, negativeLabel, positiveLabel);
       setBooleanSelection((current) => current.filter((id) => id !== selected.id));
       setCutEnabled(false);
       setCutPreview(null);
-      setNotice(interlocksEnabled
+      setNotice(addInterlocks
         ? "Corte confirmado con " + parsedInterlockCount + " encastres " + (interlockShape === "elastic" ? "elásticos" : interlockShape === "round" ? "guías redondas" : "guías cuadradas") + " de " + interlockSuggestion!.diameter.toFixed(1) + " mm y holgura de " + parsedInterlockClearance.toFixed(2) + " mm por lado. Podés deshacerlo."
-        : "Corte confirmado en " + axisLabel + " = " + parsedCutPosition.toFixed(3) + " mm. Se crearon dos objetos independientes; podés deshacerlo.");
+        : "Corte confirmado" + (cutTilted ? " con plano inclinado" : " en " + axisLabel + " = " + parsedCutPosition.toFixed(3) + " mm") + (withoutInterlocks && interlocksEnabled ? " sin encastres" : "") + ". Se crearon dos objetos independientes; podés deshacerlo.");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "No se pudieron generar las dos partes del corte.");
     } finally {
@@ -710,6 +733,7 @@ export function App() {
           </div>
           <Viewport
             multiSelectMode={viewportMultiSelect}
+            multiSelectedIds={booleanSelection}
             onObjectSelect={handleViewportObjectSelect}
             onObjectsMarqueeSelect={handleViewportMarqueeSelect}
             preview={cutPreview}
@@ -786,30 +810,61 @@ export function App() {
                   <button className="secondary-button" onClick={() => setCutEnabled(true)}>Activar vista previa</button>
                 ) : (
                   <>
-                    <div className="cut-axis-options" role="group" aria-label="Eje del corte">
+                    <div className="cut-axis-options" role="group" aria-label="Eje inicial del corte">
                       {(["x", "y", "z"] as CutAxis[]).map((axis) => (
                         <button
                           key={axis}
                           type="button"
                           className={cutAxis === axis ? "active" : ""}
                           aria-pressed={cutAxis === axis}
-                          onClick={() => setCutAxis(axis)}
+                          onClick={() => {
+                            setCutAxis(axis);
+                            setCutTilt({ x: 0, y: 0, z: 0 });
+                            setInterlocksEnabled(false);
+                          }}
                         >
                           {axis.toUpperCase()}
                         </button>
                       ))}
                     </div>
-                    <small className="cut-axis-label">{cutAxisLabels[cutAxis]}</small>
+                    <small className="cut-axis-label">{cutTilted ? "Plano inclinado desde " + cutAxisLabels[cutAxis] : cutAxisLabels[cutAxis]}</small>
+                    <div className="cut-tilt-options">
+                      <strong>Inclinación del plano · grados</strong>
+                      <small>Girá alrededor de los dos ejes que cruzan el eje inicial. El plano puede inclinarse en el espacio.</small>
+                      {cutTiltAxes[cutAxis].map((axis) => (
+                        <label className="cut-angle-row" key={axis}>
+                          <span>{axis.toUpperCase()}</span>
+                          <input
+                            aria-label={"Inclinación del plano alrededor de " + axis.toUpperCase()}
+                            type="range"
+                            min="-80"
+                            max="80"
+                            step="1"
+                            value={cutTilt[axis]}
+                            onChange={(event) => updateCutTilt(axis, Number(event.target.value))}
+                          />
+                          <input
+                            aria-label={"Ángulo del plano alrededor de " + axis.toUpperCase()}
+                            type="number"
+                            min="-80"
+                            max="80"
+                            step="1"
+                            value={cutTilt[axis]}
+                            onChange={(event) => updateCutTilt(axis, Number(event.target.value))}
+                          />
+                        </label>
+                      ))}
+                    </div>
                     <label className="property-row">
-                      <span>Posición</span>
+                      <span>Posición del plano · mm</span>
                       <input
-                        aria-label={"Posición del corte en " + cutAxis.toUpperCase()}
+                        aria-label="Posición del plano de corte en milímetros"
                         type="number"
                         min={cutMinimum}
                         max={cutMaximum}
                         step="0.01"
                         value={cutPosition}
-                        disabled={!cutBounds || cutMaximum <= cutMinimum}
+                        disabled={!cutProjectionBounds || cutMaximum <= cutMinimum}
                         onChange={(event) => {
                           const value = event.target.value;
                           if (value === "") setCutPosition("");
@@ -818,21 +873,22 @@ export function App() {
                       />
                     </label>
                     <input
-                      aria-label={"Deslizador del corte en " + cutAxis.toUpperCase()}
+                      aria-label="Deslizador de posición del plano de corte"
                       type="range"
                       min={cutMinimum}
                       max={cutMaximum}
                       step={Math.max(cutExtent / 1000, 0.001)}
                       value={cutPositionValid ? parsedCutPosition : (cutMinimum + cutMaximum) / 2}
-                      disabled={!cutBounds || cutMaximum <= cutMinimum}
+                      disabled={!cutProjectionBounds || cutMaximum <= cutMinimum}
                       onChange={(event) => boundedCutPosition(Number(event.target.value))}
                     />
-                    <small>Límites: {roundForDisplay(cutBounds?.min[cutAxis] ?? 0)} a {roundForDisplay(cutBounds?.max[cutAxis] ?? 0)} mm. El plano solo puede quedar dentro de la pieza.</small>
-                    <small>{cutBusy ? "Calculando vista previa…" : cutPreview ? "Arrastrá el control sobre el plano para ajustar el corte. Al confirmar se crearán ambas partes." : "Mové el plano o el deslizador para actualizar la vista previa."}</small>
+                    <small>Límites proyectados sobre el plano: {roundForDisplay(cutProjectionBounds?.min ?? 0)} a {roundForDisplay(cutProjectionBounds?.max ?? 0)} mm. Se calculan con los vértices de la malla.</small>
+                    <small>{cutBusy ? "Calculando vista previa…" : cutPreview ? "Arrastrá cualquiera de los ejes del control para mover el plano. Al confirmar se crearán ambas partes." : "Mové la posición o incliná el plano para actualizar la vista previa."}</small>
                     <label className="interlock-toggle">
-                      <input type="checkbox" checked={interlocksEnabled} onChange={(event) => setInterlocksEnabled(event.target.checked)} />
+                      <input type="checkbox" checked={interlocksEnabled} disabled={cutTilted} onChange={(event) => setInterlocksEnabled(event.target.checked)} />
                       <span>Agregar encastres macho/hembra</span>
                     </label>
+                    {cutTilted && <small>Los encastres automáticos se ofrecen en cortes rectos. El corte inclinado se puede confirmar sin encastres.</small>}
                     {interlocksEnabled && (
                       <div className="interlock-options">
                         <label>
@@ -854,19 +910,24 @@ export function App() {
                           <input type="number" min="0.1" max="1" step="0.05" value={interlockClearance} onChange={(event) => setInterlockClearance(event.target.value)} />
                         </label>
                         <small>
-                          {interlockSuggestion?.available
-                            ? (interlockShape === "elastic"
-                              ? "Traba automática: dos patas flexibles de " + interlockSuggestion.diameter.toFixed(1) + " mm · profundidad " + interlockSuggestion.depth.toFixed(1) + " mm. Conviene PETG o TPU."
-                              : "Tamaño automático: " + (interlockShape === "round" ? "Ø" : "lado ") + interlockSuggestion.diameter.toFixed(1) + " mm · profundidad " + interlockSuggestion.depth.toFixed(1) + " mm. Las guías alinean, no traban.")
-                            : "No hay superficie suficiente para encastres de ese tamaño. Probá con menos piezas o mové el corte."}
+                          {!interlockClearanceValid
+                            ? "La holgura debe estar entre 0,1 y 1 mm por lado."
+                            : interlockSuggestion?.available
+                              ? (interlockShape === "elastic"
+                                ? "Traba automática: dos patas flexibles de " + interlockSuggestion.diameter.toFixed(1) + " mm · profundidad " + interlockSuggestion.depth.toFixed(1) + " mm. Tamaño calculado para esta sección. Conviene PETG o TPU."
+                                : "Tamaño automático: " + (interlockShape === "round" ? "Ø" : "lado ") + interlockSuggestion.diameter.toFixed(1) + " mm · profundidad " + interlockSuggestion.depth.toFixed(1) + " mm. Tamaño calculado para esta sección. Las guías alinean, no traban.")
+                              : "La sección real no deja espacio para este encastre. Probá con menos trabas, un corte en otra zona o confirmá sin encastres."}
                         </small>
                       </div>
                     )}
                     <button
                       className="primary-button"
-                      disabled={!cutPreview || cutBusy || !cutPositionValid || (interlocksEnabled && (!interlockSuggestion?.available || !interlockClearanceValid))}
-                      onClick={confirmPlanarCut}
+                      disabled={!cutPreview || cutBusy || !cutPositionValid || (interlocksEnabled && !cutCanUseInterlocks)}
+                      onClick={() => confirmPlanarCut()}
                     >Confirmar corte</button>
+                    {interlocksEnabled && !cutCanUseInterlocks && (
+                      <button className="primary-button" disabled={!cutPreview || cutBusy || !cutPositionValid} onClick={() => confirmPlanarCut(true)}>Confirmar corte sin encastres</button>
+                    )}
                     <button className="secondary-button" onClick={cancelHeightCut}>Cancelar corte</button>
                   </>
                 )}

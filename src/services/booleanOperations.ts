@@ -5,6 +5,20 @@ import { addInterlocksInWorker, hollowCustomMeshInWorker, splitMeshInWorker, sub
 
 export type BooleanOperation = "union" | "subtract" | "intersect";
 export type CutAxis = "x" | "y" | "z";
+export type CutTilt = { x: number; y: number; z: number };
+
+/** Returns the unit normal for a preset axis rotated by world-space tilt angles. */
+export function getCutPlaneNormal(axis: CutAxis, tilt: CutTilt = { x: 0, y: 0, z: 0 }): [number, number, number] {
+  const normal = new THREE.Vector3(axis === "x" ? 1 : 0, axis === "y" ? 1 : 0, axis === "z" ? 1 : 0);
+  const rotation = new THREE.Euler(
+    THREE.MathUtils.degToRad(tilt.x),
+    THREE.MathUtils.degToRad(tilt.y),
+    THREE.MathUtils.degToRad(tilt.z),
+    "XYZ"
+  );
+  normal.applyEuler(rotation).normalize();
+  return [normal.x, normal.y, normal.z];
+}
 
 type ManifoldApi = Awaited<ReturnType<typeof Module>>;
 let manifoldPromise: Promise<ManifoldApi> | null = null;
@@ -360,42 +374,66 @@ export async function calculateHollow(
 }
 
 type CutSide = "negative" | "positive";
+export type CutProjectionBounds = { min: number; max: number };
+const zeroCutTilt: CutTilt = { x: 0, y: 0, z: 0 };
 
-function validateCutCoordinate(bounds: THREE.Box3, axis: CutAxis, coordinate: number) {
-  if (!Number.isFinite(coordinate)) throw new Error("La posición del corte debe ser un número válido.");
-  const minimum = bounds.min[axis];
-  const maximum = bounds.max[axis];
-  const epsilon = Math.max((maximum - minimum) * 1e-6, 1e-5);
-  if (coordinate <= minimum + epsilon) throw new Error("El corte debe quedar dentro de los límites de la pieza, no en el borde mínimo.");
-  if (coordinate >= maximum - epsilon) throw new Error("El corte debe quedar dentro de los límites de la pieza, no en el borde máximo.");
+function projectGeometry(geometry: THREE.BufferGeometry, normal: [number, number, number]): CutProjectionBounds {
+  const position = geometry.getAttribute("position");
+  if (!position || position.count < 4) throw new Error("La pieza no contiene una malla válida.");
+  const direction = new THREE.Vector3(...normal).normalize();
+  let min = Infinity;
+  let max = -Infinity;
+  const point = new THREE.Vector3();
+  for (let index = 0; index < position.count; index++) {
+    point.set(position.getX(index), position.getY(index), position.getZ(index));
+    const projection = point.dot(direction);
+    min = Math.min(min, projection);
+    max = Math.max(max, projection);
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max)) throw new Error("No se pudieron calcular los límites del plano de corte.");
+  return { min, max };
 }
 
-function createAxisCutter(bounds: THREE.Box3, axis: CutAxis, coordinate: number, removeSide: CutSide): THREE.BufferGeometry {
-  const size = bounds.getSize(new THREE.Vector3());
-  const margin = Math.max(size.x, size.y, size.z, 1) + 1;
-  const minimum = { x: bounds.min.x - margin, y: bounds.min.y - margin, z: bounds.min.z - margin };
-  const maximum = { x: bounds.max.x + margin, y: bounds.max.y + margin, z: bounds.max.z + margin };
-  if (removeSide === "positive") minimum[axis] = coordinate;
-  else maximum[axis] = coordinate;
+/** Projects every world-space mesh vertex onto a plane normal for accurate cut limits. */
+export function calculateObjectProjectionBounds(object: ProjectObject, normal: [number, number, number]): CutProjectionBounds {
+  const geometry = createWorldGeometry(object);
+  try {
+    return projectGeometry(geometry, normal);
+  } finally {
+    geometry.dispose();
+  }
+}
 
-  const cutter: ProjectObject = {
-    id: crypto.randomUUID(),
-    name: "Plano de corte",
-    kind: "box",
-    booleanRole: "cutter",
-    position: {
-      x: (minimum.x + maximum.x) / 2,
-      y: (minimum.y + maximum.y) / 2,
-      z: (minimum.z + maximum.z) / 2
-    },
-    dimensions: {
-      x: maximum.x - minimum.x,
-      y: maximum.y - minimum.y,
-      z: maximum.z - minimum.z
-    },
-    rotation: { x: 0, y: 0, z: 0 }
-  };
-  return createWorldGeometry(cutter);
+function validateCutCoordinate(bounds: CutProjectionBounds, coordinate: number) {
+  if (!Number.isFinite(coordinate)) throw new Error("La posición del corte debe ser un número válido.");
+  const epsilon = Math.max((bounds.max - bounds.min) * 1e-6, 1e-5);
+  if (coordinate <= bounds.min + epsilon) throw new Error("El corte debe quedar dentro de los límites de la pieza, no en el borde mínimo.");
+  if (coordinate >= bounds.max - epsilon) throw new Error("El corte debe quedar dentro de los límites de la pieza, no en el borde máximo.");
+}
+
+function createPlaneCutter(
+  bounds: THREE.Box3,
+  projectionBounds: CutProjectionBounds,
+  normal: [number, number, number],
+  coordinate: number,
+  removeSide: CutSide
+): THREE.BufferGeometry {
+  const direction = new THREE.Vector3(...normal).normalize();
+  const size = bounds.getSize(new THREE.Vector3());
+  const margin = Math.max(size.length(), 1) + 1;
+  const low = removeSide === "positive" ? coordinate : projectionBounds.min - margin;
+  const high = removeSide === "positive" ? projectionBounds.max + margin : coordinate;
+  const height = high - low;
+  if (!Number.isFinite(height) || height <= 0) throw new Error("No se pudo construir el plano de corte.");
+  const span = Math.max(size.length() * 2 + 2, 4);
+  const boxCenter = bounds.getCenter(new THREE.Vector3());
+  boxCenter.addScaledVector(direction, coordinate - boxCenter.dot(direction));
+  boxCenter.addScaledVector(direction, (low + high) / 2 - coordinate);
+
+  const cutter = new THREE.BoxGeometry(span, height, span);
+  cutter.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction));
+  cutter.translate(boxCenter.x, boxCenter.y, boxCenter.z);
+  return cutter;
 }
 
 function getCutGeometry(object: ProjectObject) {
@@ -409,36 +447,49 @@ function getCutGeometry(object: ProjectObject) {
   return { geometry, bounds };
 }
 
-/** Returns the negative-side portion of a mesh cut on a world-space X, Y, or Z plane. */
-export async function calculatePlanarCut(object: ProjectObject, axis: CutAxis, coordinate: number, signal?: AbortSignal): Promise<number[]> {
+/** Returns the negative side of a plane cut with a preset axis and optional tilt. */
+export async function calculatePlanarCut(
+  object: ProjectObject,
+  axis: CutAxis,
+  coordinate: number,
+  signal?: AbortSignal,
+  tilt: CutTilt = zeroCutTilt
+): Promise<number[]> {
   const { geometry, bounds } = getCutGeometry(object);
   let cutterGeometry: THREE.BufferGeometry | null = null;
   try {
-    validateCutCoordinate(bounds, axis, coordinate);
-    const source = triangleSoup(geometry);
-    cutterGeometry = createAxisCutter(bounds, axis, coordinate, "positive");
-    return await subtractMeshInWorker(source, triangleSoup(cutterGeometry), signal);
+    const normal = getCutPlaneNormal(axis, tilt);
+    const projectionBounds = projectGeometry(geometry, normal);
+    validateCutCoordinate(projectionBounds, coordinate);
+    cutterGeometry = createPlaneCutter(bounds, projectionBounds, normal, coordinate, "positive");
+    return await subtractMeshInWorker(triangleSoup(geometry), triangleSoup(cutterGeometry), signal);
   } finally {
     cutterGeometry?.dispose();
     geometry.dispose();
   }
 }
 
-/** Returns both independent solids produced by a planar X, Y, or Z cut. */
+/** Returns both independent solids produced by a plane cut with a preset axis and optional tilt. */
 export async function calculatePlanarSplit(
   object: ProjectObject,
   axis: CutAxis,
-  coordinate: number
+  coordinate: number,
+  tilt: CutTilt = zeroCutTilt
 ): Promise<{ negative: number[]; positive: number[] }> {
   const { geometry, bounds } = getCutGeometry(object);
   let negativeCutterGeometry: THREE.BufferGeometry | null = null;
   let positiveCutterGeometry: THREE.BufferGeometry | null = null;
   try {
-    validateCutCoordinate(bounds, axis, coordinate);
-    const source = triangleSoup(geometry);
-    negativeCutterGeometry = createAxisCutter(bounds, axis, coordinate, "negative");
-    positiveCutterGeometry = createAxisCutter(bounds, axis, coordinate, "positive");
-    return await splitMeshInWorker(source, triangleSoup(negativeCutterGeometry), triangleSoup(positiveCutterGeometry));
+    const normal = getCutPlaneNormal(axis, tilt);
+    const projectionBounds = projectGeometry(geometry, normal);
+    validateCutCoordinate(projectionBounds, coordinate);
+    negativeCutterGeometry = createPlaneCutter(bounds, projectionBounds, normal, coordinate, "negative");
+    positiveCutterGeometry = createPlaneCutter(bounds, projectionBounds, normal, coordinate, "positive");
+    return await splitMeshInWorker(
+      triangleSoup(geometry),
+      triangleSoup(negativeCutterGeometry),
+      triangleSoup(positiveCutterGeometry)
+    );
   } finally {
     negativeCutterGeometry?.dispose();
     positiveCutterGeometry?.dispose();
@@ -486,12 +537,21 @@ export function getPlanarCutFaceBounds(vertices: number[], axis: CutAxis, coordi
   return { firstAxis, secondAxis, minFirst, maxFirst, minSecond, maxSecond };
 }
 
+function elasticFootprint(width: number, clearance: number): number {
+  const stemWidth = Math.min(1.6, Math.max(0.65, width * 0.16));
+  const gap = stemWidth * 0.65;
+  const hookHeight = Math.min(1.4, Math.max(0.45, width * 0.14));
+  return 2 * (stemWidth + gap / 2 + hookHeight + clearance);
+}
+
 export function suggestPlanarInterlocks(
   face: PlanarCutFaceBounds | null,
   bounds: THREE.Box3,
   axis: CutAxis,
   coordinate: number,
-  count: number
+  count: number,
+  shape: InterlockShape = "elastic",
+  clearance = 0.25
 ): InterlockSuggestion {
   if (!face || !Number.isInteger(count) || count < 1 || count > 6) {
     return { diameter: 0, depth: 0, embed: 0, available: false };
@@ -500,13 +560,23 @@ export function suggestPlanarInterlocks(
   const secondSize = face.maxSecond - face.minSecond;
   const shortSide = Math.min(firstSize, secondSize);
   const longSide = Math.max(firstSize, secondSize);
-  const diameter = Math.floor(Math.min(8, shortSide * 0.28, longSide / (count * 1.8)) * 10) / 10;
+  const safeClearance = Number.isFinite(clearance) ? Math.max(0, clearance) : 0;
+  const maximumAlongLength = Math.min(16, longSide / (count * 1.8) - safeClearance * 2);
+  let diameter = 0;
+  if (shape === "elastic") {
+    const usableCrossSection = shortSide * 0.9;
+    for (let candidate = 0.1; candidate <= maximumAlongLength + 1e-6; candidate += 0.1) {
+      if (elasticFootprint(candidate, safeClearance) <= usableCrossSection) diameter = candidate;
+    }
+  } else {
+    diameter = Math.floor(Math.min(maximumAlongLength, shortSide * 0.82 - safeClearance * 2) * 10) / 10;
+  }
   const negativeThickness = coordinate - bounds.min[axis];
   const positiveThickness = bounds.max[axis] - coordinate;
   const embed = Math.min(Math.max(diameter * 0.18, 0.35), negativeThickness * 0.2);
-  const depth = Math.min(Math.max(diameter * 1.2, 2), positiveThickness * 0.45);
+  const depth = Math.min(10, Math.max(diameter * 1.2, 2), positiveThickness * 0.45);
   const available = diameter >= 1.2 && embed >= 0.25 && depth >= Math.max(1.5, diameter * 0.65);
-  return { diameter, depth: Math.floor(depth * 10) / 10, embed: Math.floor(embed * 10) / 10, available };
+  return { diameter: Math.floor(diameter * 10) / 10, depth: Math.floor(depth * 10) / 10, embed: Math.floor(embed * 10) / 10, available };
 }
 
 function makeConnectorGeometry(
@@ -608,7 +678,7 @@ export async function addInterlocksToPlanarSplit(
     throw new Error("La holgura debe estar entre 0,1 y 1 mm.");
   }
   const face = getPlanarCutFaceBounds(parts.negative, axis, coordinate);
-  const suggestion = suggestPlanarInterlocks(face, bounds, axis, coordinate, count);
+  const suggestion = suggestPlanarInterlocks(face, bounds, axis, coordinate, count, shape, clearance);
   if (!face || !suggestion.available) {
     throw new Error("No hay suficiente superficie o espesor para ese número de encastres. Probá con menos encastres o un corte más centrado.");
   }
@@ -631,11 +701,11 @@ export async function addInterlocksToPlanarSplit(
     for (let index = 0; index < count; index++) {
       center[longAxis] = longMinimum + longSize * (index + 1) / (count + 1);
       if (shape === "elastic") {
-        const stemWidth = Math.min(1, Math.max(0.65, suggestion.diameter * 0.16));
+        const stemWidth = Math.min(1.6, Math.max(0.65, suggestion.diameter * 0.16));
         const gap = stemWidth * 0.65;
-        const hookHeight = Math.min(0.9, Math.max(0.45, suggestion.diameter * 0.14));
-        const shoulderDepth = Math.min(1.2, suggestion.depth * 0.3);
-        const rampLength = Math.min(0.9, suggestion.depth * 0.24);
+        const hookHeight = Math.min(1.4, Math.max(0.45, suggestion.diameter * 0.14));
+        const shoulderDepth = Math.min(1.8, suggestion.depth * 0.3);
+        const rampLength = Math.min(1.35, suggestion.depth * 0.24);
         const shoulderStart = suggestion.depth - shoulderDepth;
         const rampStart = suggestion.depth - rampLength;
         const prongCenter = stemWidth / 2 + gap / 2;
@@ -708,17 +778,8 @@ export function calculateHeightCut(object: ProjectObject, height: number, signal
 }
 
 export async function calculateHeightUpper(object: ProjectObject, height: number): Promise<number[]> {
-  const { geometry, bounds } = getCutGeometry(object);
-  let cutterGeometry: THREE.BufferGeometry | null = null;
-  try {
-    validateCutCoordinate(bounds, "y", height);
-    const source = triangleSoup(geometry);
-    cutterGeometry = createAxisCutter(bounds, "y", height, "negative");
-    return await subtractMeshInWorker(source, triangleSoup(cutterGeometry));
-  } finally {
-    cutterGeometry?.dispose();
-    geometry.dispose();
-  }
+  const result = await calculatePlanarSplit(object, "y", height);
+  return result.positive;
 }
 
 export async function calculateHeightSplit(object: ProjectObject, height: number): Promise<{ lower: number[]; upper: number[] }> {

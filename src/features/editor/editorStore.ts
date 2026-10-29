@@ -19,6 +19,7 @@ type EditorState = {
   selectObject: (id: string | null) => void;
   deleteObjects: (ids: string[]) => void;
   updateObject: (id: string, patch: Partial<Pick<ProjectObject, "position" | "dimensions" | "rotation" | "booleanRole" | "color">>) => void;
+  updateObjectsPositions: (positions: Record<string, Vector3>) => void;
   alignObjects: (objectIds: string[], axis: AlignmentAxis, mode: AlignmentMode) => void;
   spaceObjects: (objectIds: string[], axis: AlignmentAxis, mode: SpacingMode, gap: number) => void;
   applyBooleanResult: (objectIds: string[], name: string, vertices: number[]) => void; 
@@ -274,6 +275,30 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const history = transactionStart ? { past: state.past, future: state.future } : { past: [...state.past, cloneObjects(state.objects)].slice(-100), future: [] };
     return { ...history, objects: nextObjects };
   }),
+  updateObjectsPositions: (positions) => set((state) => {
+    let changed = false;
+    const nextObjects = state.objects.map((object) => {
+      const position = positions[object.id];
+      if (!position) return object;
+      const nextPosition = {
+        x: roundMillimeters(position.x),
+        y: roundMillimeters(position.y),
+        z: roundMillimeters(position.z)
+      };
+      if (
+        nextPosition.x === object.position.x &&
+        nextPosition.y === object.position.y &&
+        nextPosition.z === object.position.z
+      ) return object;
+      changed = true;
+      return { ...object, position: nextPosition };
+    });
+    if (!changed) return state;
+    const history = transactionStart
+      ? { past: state.past, future: state.future }
+      : { past: [...state.past, cloneObjects(state.objects)].slice(-100), future: [] };
+    return { ...history, objects: nextObjects };
+  }),
   applyBooleanResult: (objectIds, name, vertices) => set((state) => {
     const history = transactionStart ? { past: state.past, future: state.future } : { past: [...state.past, cloneObjects(state.objects)].slice(-100), future: [] };
     const selected = state.objects.filter((object) => objectIds.includes(object.id));
@@ -288,4 +313,3 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     return { ...history, objects: [...state.objects.filter((object) => !objectIds.includes(object.id)), result], selectedId: result.id };
   })
 }));
-
