@@ -9,6 +9,7 @@ import { calculateBoolean, calculateHeightCut, calculateHeightSplit, calculateHo
 export function App() {
   const [advanced, setAdvanced] = useState(false);
   const [booleanSelection, setBooleanSelection] = useState<string[]>([]);
+  const [alignmentOpen, setAlignmentOpen] = useState(false);
   const [viewportMultiSelect, setViewportMultiSelect] = useState(false);
   const [notice, setNotice] = useState("MiCAD · herramientas CAD en desarrollo");
   const [wallThicknesses, setWallThicknesses] = useState({ left: "2", right: "2", front: "2", back: "2", bottom: "2" });
@@ -26,6 +27,7 @@ export function App() {
   const selectObject = useEditorStore((s) => s.selectObject);
   const deleteObjects = useEditorStore((s) => s.deleteObjects);
   const updateObject = useEditorStore((s) => s.updateObject);
+  const alignObjects = useEditorStore((s) => s.alignObjects);
   const applyBooleanResult = useEditorStore((s) => s.applyBooleanResult); 
   const applyHeightSplitResult = useEditorStore((s) => s.applyHeightSplitResult);
   const loadProjectObjects = useEditorStore((s) => s.loadProjectObjects);
@@ -61,7 +63,7 @@ export function App() {
       positionX: String(roundForDisplay(selected.position.x)), positionY: String(roundForDisplay(getBedBaseY(selected))), positionZ: String(roundForDisplay(selected.position.z)),
       rotationX: String(roundForDisplay(selected.rotation.x)), rotationY: String(roundForDisplay(selected.rotation.y)), rotationZ: String(roundForDisplay(selected.rotation.z))
     });
-  }, [selectedId]);
+  }, [selectedId, selected]);
 
   useEffect(() => {
     if (!cutEnabled || !selected || !cutHeight.trim() || !Number.isFinite(Number(cutHeight))) {
@@ -132,6 +134,25 @@ export function App() {
     window.addEventListener("keydown", handleHistoryShortcut);
     return () => window.removeEventListener("keydown", handleHistoryShortcut);
   }, [undo, redo]);
+
+  function handleAlign(axis: "x" | "y" | "z", mode: "min" | "center" | "max") {
+    const selectedCount = objects.filter((object) => booleanSelection.includes(object.id)).length;
+    if (selectedCount < 2) {
+      setNotice("Marcá al menos dos piezas para alinearlas.");
+      return;
+    }
+    try {
+      const positionsBefore = new Map(objects.filter((object) => booleanSelection.includes(object.id)).map((object) => [object.id, object.position[axis]]));
+      alignObjects(booleanSelection, axis, mode);
+      const changed = useEditorStore.getState().objects.some((object) => positionsBefore.has(object.id) && positionsBefore.get(object.id) !== object.position[axis]);
+      const modeLabel = mode === "min" ? "mínimo" : mode === "max" ? "máximo" : "centro";
+      setNotice(changed
+        ? "Piezas alineadas por " + modeLabel + " en " + axis.toUpperCase() + ". Podés deshacerlo."
+        : "Las piezas ya estaban alineadas por " + modeLabel + " en " + axis.toUpperCase() + ".");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No se pudieron alinear las piezas.");
+    }
+  }
 
   function toggleBooleanSelection(id: string) {
     setBooleanSelection((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
@@ -414,7 +435,7 @@ export function App() {
 
           <div className="section-heading object-heading">Objetos del proyecto <span>{objects.length}</span></div>
           <div className="boolean-tools">
-            <small>{viewportMultiSelect ? "Tocá piezas en el área 3D para agregarlas o quitarlas de la selección." : "Marcá las piezas que querés combinar o cortar."}</small>
+            <small>{viewportMultiSelect ? "Tocá piezas en el área 3D para agregarlas o quitarlas de la selección." : "Marcá piezas para combinarlas, cortarlas o alinearlas."}</small>
             <button className={`secondary-button ${viewportMultiSelect ? "active" : ""}`} onClick={() => setViewportMultiSelect((active) => !active)} aria-pressed={viewportMultiSelect}>
               {viewportMultiSelect ? "Finalizar selección 3D" : "Seleccionar piezas en 3D"}
             </button>
@@ -423,6 +444,30 @@ export function App() {
               <button className="secondary-button" onClick={() => handleBoolean("subtract")}>Restar</button>
             </div>
             <button className="secondary-button" onClick={() => handleBoolean("intersect")}>Intersección</button>
+            <button className="secondary-button" onClick={() => setAlignmentOpen((open) => !open)} aria-expanded={alignmentOpen}>
+              {alignmentOpen ? "Ocultar alineación" : "Alinear objetos"}
+            </button>
+            {alignmentOpen && (
+              <div className="alignment-tools">
+                <small>Elegí mínimo, centro o máximo para alinear los límites reales de las piezas marcadas.</small>
+                {(["x", "y", "z"] as const).map((axis) => (
+                  <div className="alignment-axis" key={axis}>
+                    <b>{axis.toUpperCase()}</b>
+                    {(["min", "center", "max"] as const).map((mode) => {
+                      const modeLabel = mode === "min" ? "mínimo" : mode === "max" ? "máximo" : "centro";
+                      return <button
+                        key={mode}
+                        className="secondary-button"
+                        disabled={booleanSelection.length < 2}
+                        title={"Alinear por " + modeLabel + " en " + axis.toUpperCase()}
+                        aria-label={"Alinear por " + modeLabel + " en " + axis.toUpperCase()}
+                        onClick={() => handleAlign(axis, mode)}
+                      >{mode === "center" ? "Centro" : mode === "min" ? "Mín" : "Máx"}</button>;
+                    })}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
           <div className="object-list">
             {objects.map((object) => (
@@ -431,7 +476,7 @@ export function App() {
                   className={`object-row ${selectedId === object.id ? "selected" : ""}`}
                   onClick={() => selectObject(object.id)}
                 >
-                  <input aria-label={`Incluir ${object.name} en operación booleana`} type="checkbox" checked={booleanSelection.includes(object.id)} onClick={(event) => event.stopPropagation()} onChange={() => toggleBooleanSelection(object.id)} />
+                  <input aria-label={`Incluir ${object.name} en la selección de piezas`} type="checkbox" checked={booleanSelection.includes(object.id)} onClick={(event) => event.stopPropagation()} onChange={() => toggleBooleanSelection(object.id)} />
                   <span className="object-dot" style={{ backgroundColor: object.color ?? "#8b9cf6" }} />
                   <span>{object.name}</span>
                 </button>
@@ -609,3 +654,4 @@ export function App() {
     </main>
   );
 }
+

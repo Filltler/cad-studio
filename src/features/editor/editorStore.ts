@@ -1,5 +1,9 @@
 import { create } from "zustand";
 import type { ProjectObject, PrimitiveKind, Vector3 } from "../../domain/project";
+import { calculateObjectBounds } from "../../services/booleanOperations";
+
+type AlignmentAxis = "x" | "y" | "z";
+type AlignmentMode = "min" | "center" | "max";
 
 type EditorState = {
   objects: ProjectObject[];
@@ -14,6 +18,7 @@ type EditorState = {
   selectObject: (id: string | null) => void;
   deleteObjects: (ids: string[]) => void;
   updateObject: (id: string, patch: Partial<Pick<ProjectObject, "position" | "dimensions" | "rotation" | "booleanRole" | "color">>) => void;
+  alignObjects: (objectIds: string[], axis: AlignmentAxis, mode: AlignmentMode) => void;
   applyBooleanResult: (objectIds: string[], name: string, vertices: number[]) => void; 
   applyHeightSplitResult: (objectId: string, name: string, lowerVertices: number[], upperVertices: number[]) => void;
   loadProjectObjects: (objects: ProjectObject[]) => void;
@@ -82,6 +87,32 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     return { ...history, objects: [...state.objects, object], selectedId: object.id };
   }),
   selectObject: (id) => set({ selectedId: id }),
+  alignObjects: (objectIds, axis, mode) => set((state) => {
+    const selectedObjects = state.objects.filter((object) => objectIds.includes(object.id));
+    if (selectedObjects.length < 2) return state;
+
+    const boundsById = new Map(selectedObjects.map((object) => [object.id, calculateObjectBounds(object)] as const));
+    const aggregateMin = Math.min(...selectedObjects.map((object) => boundsById.get(object.id)!.min[axis]));
+    const aggregateMax = Math.max(...selectedObjects.map((object) => boundsById.get(object.id)!.max[axis]));
+    const target = mode === "min" ? aggregateMin : mode === "max" ? aggregateMax : (aggregateMin + aggregateMax) / 2;
+
+    let changed = false;
+    const nextObjects = state.objects.map((object) => {
+      const bounds = boundsById.get(object.id);
+      if (!bounds) return object;
+      const current = mode === "min" ? bounds.min[axis] : mode === "max" ? bounds.max[axis] : (bounds.min[axis] + bounds.max[axis]) / 2;
+      const delta = target - current;
+      if (Math.abs(delta) < 0.0005) return object;
+      changed = true;
+      return { ...object, position: { ...object.position, [axis]: roundMillimeters(object.position[axis] + delta) } };
+    });
+    if (!changed) return state;
+
+    const history = transactionStart
+      ? { past: state.past, future: state.future }
+      : { past: [...state.past, cloneObjects(state.objects)].slice(-100), future: [] };
+    return { ...history, objects: nextObjects };
+  }),
   deleteObjects: (ids) => set((state) => {
     const remove = new Set(ids);
     const next = state.objects.filter((object) => !remove.has(object.id));
@@ -139,3 +170,4 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     return { ...history, objects: [...state.objects.filter((object) => !objectIds.includes(object.id)), result], selectedId: result.id };
   })
 }));
+
