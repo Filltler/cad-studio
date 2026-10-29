@@ -118,6 +118,13 @@ export function App() {
 
   useEffect(() => {
     function handleHistoryShortcut(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setBooleanSelection([]);
+        setViewportMultiSelect(false);
+        selectObject(null);
+        return;
+      }
       const target = event.target as HTMLElement | null;
       if (target && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
       if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
@@ -135,7 +142,7 @@ export function App() {
     }
     window.addEventListener("keydown", handleHistoryShortcut);
     return () => window.removeEventListener("keydown", handleHistoryShortcut);
-  }, [undo, redo]);
+  }, [undo, redo, selectObject]);
 
   function handleAlign(axis: "x" | "y" | "z", mode: "min" | "center" | "max") {
     const selectedCount = objects.filter((object) => booleanSelection.includes(object.id)).length;
@@ -572,7 +579,7 @@ export function App() {
           </div>
           <Viewport multiSelectMode={viewportMultiSelect} onObjectSelect={handleViewportObjectSelect} onObjectsMarqueeSelect={handleViewportMarqueeSelect} preview={cutPreview} />
           <div className="viewport-bottom">
-            <span>Arrastrá para orbitar · Shift+arrastrá para seleccionar por recuadro · Rueda para zoom</span>
+            <span>Arrastrá para orbitar · Shift+arrastrá para seleccionar · Esc para cancelar · Rueda para zoom</span>
             <span>Unidades: milímetros</span>
           </div>
         </section>

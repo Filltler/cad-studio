@@ -342,10 +342,22 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
         endTransaction();
       }
     };
+    const cancelMarqueeOnEscape = (event: KeyboardEvent) => {
+      const marquee = selectionDragRef.current;
+      if (event.key !== "Escape" || !marquee) return;
+      selectionDragRef.current = null;
+      host.classList.remove("marquee-selecting");
+      if (selectionBoxRef.current) selectionBoxRef.current.style.display = "none";
+      controls.enabled = true;
+      try {
+        if (renderer.domElement.hasPointerCapture(marquee.pointerId)) renderer.domElement.releasePointerCapture(marquee.pointerId);
+      } catch { /* Ignore unsupported pointer capture. */ }
+    };
     renderer.domElement.addEventListener("pointerdown", onPointerDown, true);
     renderer.domElement.addEventListener("pointermove", onPointerMove);
     renderer.domElement.addEventListener("pointerup", onPointerUp, true);
     renderer.domElement.addEventListener("pointercancel", onPointerUp, true);
+    window.addEventListener("keydown", cancelMarqueeOnEscape);
 
     let frame = 0;
     const animate = () => {
@@ -362,6 +374,7 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
       renderer.domElement.removeEventListener("pointermove", onPointerMove);
       renderer.domElement.removeEventListener("pointerup", onPointerUp, true);
       renderer.domElement.removeEventListener("pointercancel", onPointerUp, true);
+      window.removeEventListener("keydown", cancelMarqueeOnEscape);
       selectionDragRef.current = null;
       host.classList.remove("marquee-selecting");
       if (selectionBoxRef.current) selectionBoxRef.current.style.display = "none";
