@@ -22,6 +22,7 @@ type EditorState = {
   alignObjects: (objectIds: string[], axis: AlignmentAxis, mode: AlignmentMode) => void;
   spaceObjects: (objectIds: string[], axis: AlignmentAxis, mode: SpacingMode, gap: number) => void;
   applyBooleanResult: (objectIds: string[], name: string, vertices: number[]) => void; 
+  addCustomObject: (name: string, vertices: number[], position?: Vector3) => void;
   applyHeightSplitResult: (objectId: string, name: string, lowerVertices: number[], upperVertices: number[]) => void;
   loadProjectObjects: (objects: ProjectObject[]) => void;
 };
@@ -89,6 +90,41 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     return { ...history, objects: [...state.objects, object], selectedId: object.id };
   }),
   selectObject: (id) => set({ selectedId: id }),
+  addCustomObject: (name, vertices, position = { x: 0, y: 0, z: 0 }) => set((state) => {
+    if (vertices.length < 36 || vertices.length % 9 !== 0) {
+      throw new Error("La malla importada no contiene triángulos 3D válidos.");
+    }
+    let minX = Infinity, minY = Infinity, minZ = Infinity;
+    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+    for (let index = 0; index < vertices.length; index += 3) {
+      const x = vertices[index], y = vertices[index + 1], z = vertices[index + 2];
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+        throw new Error("La malla importada contiene coordenadas inválidas.");
+      }
+      minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+      minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+    }
+    const dimensions = { x: maxX - minX, y: maxY - minY, z: maxZ - minZ };
+    if (Object.values(dimensions).some((size) => !Number.isFinite(size) || size <= 0.001)) {
+      throw new Error("La malla importada debe tener dimensiones 3D válidas.");
+    }
+    const history = transactionStart
+      ? { past: state.past, future: state.future }
+      : { past: [...state.past, cloneObjects(state.objects)].slice(-100), future: [] };
+    const object: ProjectObject = {
+      id: crypto.randomUUID(),
+      name: name.trim() || "Malla importada",
+      kind: "custom",
+      booleanRole: "solid",
+      color: "#8b9cf6",
+      position: { ...position },
+      dimensions: { x: roundMillimeters(dimensions.x), y: roundMillimeters(dimensions.y), z: roundMillimeters(dimensions.z) },
+      rotation: { x: 0, y: 0, z: 0 },
+      geometryVertices: [...vertices]
+    };
+    return { ...history, objects: [...state.objects, object], selectedId: object.id };
+  }),
   alignObjects: (objectIds, axis, mode) => set((state) => {
     const selectedObjects = state.objects.filter((object) => objectIds.includes(object.id));
     if (selectedObjects.length < 2) return state;
