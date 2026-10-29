@@ -3,9 +3,23 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { useEditorStore } from "../editor/editorStore";
+import type { CutAxis } from "../../services/booleanOperations";
 
 type TransformMode = "translate" | "rotate" | "scale";
-type ViewportProps = { multiSelectMode?: boolean; onObjectSelect?: (id: string | null, additive: boolean) => void; onObjectsMarqueeSelect?: (ids: string[], additive: boolean) => void; preview?: { objectId: string; vertices: number[] } | null };
+type CutPlaneSpec = {
+  objectId: string;
+  axis: CutAxis;
+  position: number;
+  bounds: { min: [number, number, number]; max: [number, number, number] };
+};
+type ViewportProps = {
+  multiSelectMode?: boolean;
+  onObjectSelect?: (id: string | null, additive: boolean) => void;
+  onObjectsMarqueeSelect?: (ids: string[], additive: boolean) => void;
+  preview?: { objectId: string; vertices: number[] } | null;
+  cutPlane?: CutPlaneSpec | null;
+  onCutPositionChange?: (position: number) => void;
+};
 
 const modeLabels: Record<TransformMode, string> = {
   translate: "Mover",
@@ -13,7 +27,7 @@ const modeLabels: Record<TransformMode, string> = {
   scale: "Escalar"
 };
 
-export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMarqueeSelect, preview = null }: ViewportProps) {
+export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMarqueeSelect, preview = null, cutPlane = null, onCutPositionChange }: ViewportProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const selectionBoxRef = useRef<HTMLDivElement>(null);
   const objects = useEditorStore((s) => s.objects);
@@ -26,6 +40,8 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
   const meshMap = useRef(new Map<string, THREE.Mesh>());
   const meshCenterById = useRef(new Map<string, THREE.Vector3>());
   const previewMeshRef = useRef<THREE.Mesh | null>(null);
+  const cutPlaneGroupRef = useRef<THREE.Group | null>(null);
+  const cutPlaneSurfaceRef = useRef<THREE.Mesh | null>(null);
   const transformRef = useRef<TransformControls | null>(null);
   const orbitRef = useRef<OrbitControls | null>(null);
   const objectsRef = useRef(objects);
@@ -34,6 +50,8 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
   const onObjectSelectRef = useRef(onObjectSelect);
   const onObjectsMarqueeSelectRef = useRef(onObjectsMarqueeSelect);
   const previewRef = useRef(preview);
+  const cutPlaneRef = useRef(cutPlane);
+  const onCutPositionChangeRef = useRef(onCutPositionChange);
   const selectionDragRef = useRef<{ pointerId: number; startX: number; startY: number } | null>(null);
   objectsRef.current = objects;
   selectedIdRef.current = selectedId;
@@ -41,6 +59,8 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
   onObjectSelectRef.current = onObjectSelect;
   onObjectsMarqueeSelectRef.current = onObjectsMarqueeSelect;
   previewRef.current = preview;
+  cutPlaneRef.current = cutPlane;
+  onCutPositionChangeRef.current = onCutPositionChange;
   const modeRef = useRef<TransformMode>("translate");
   const dimensionHandles = useRef<THREE.Mesh[]>([]);
   const dragState = useRef<{
@@ -81,6 +101,27 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
     transformRef.current = transform;
     scene.add(transform.getHelper());
 
+    const cutPlaneGroup = new THREE.Group();
+    cutPlaneGroup.userData.cutPlaneHandle = true;
+    const cutPlaneSurface = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({ color: "#fbbf24", transparent: true, opacity: 0.24, side: THREE.DoubleSide, depthTest: false, depthWrite: false })
+    );
+    cutPlaneSurface.userData.cutPlaneSurface = true;
+    cutPlaneSurface.renderOrder = 8;
+    cutPlaneGroup.add(cutPlaneSurface);
+    const cutPlaneCenter = new THREE.Mesh(
+      new THREE.SphereGeometry(1.15, 16, 12),
+      new THREE.MeshBasicMaterial({ color: "#f59e0b", depthTest: false })
+    );
+    cutPlaneCenter.userData.cutPlaneCenter = true;
+    cutPlaneCenter.renderOrder = 9;
+    cutPlaneGroup.add(cutPlaneCenter);
+    cutPlaneGroup.visible = false;
+    scene.add(cutPlaneGroup);
+    cutPlaneGroupRef.current = cutPlaneGroup;
+    cutPlaneSurfaceRef.current = cutPlaneSurface;
+
     // Six face-center handles for direct dimension editing in Scale mode.
     const handleMaterial = [
       new THREE.MeshBasicMaterial({ color: "#ef4444", depthTest: false }),
@@ -103,11 +144,18 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
 
     transform.addEventListener("dragging-changed", (event) => {
       controls.enabled = !event.value;
+      if (transform.object?.userData.cutPlaneHandle) return;
       if (event.value) beginTransaction();
       else endTransaction();
     });
     transform.addEventListener("objectChange", () => {
-      const mesh = transform.object as THREE.Mesh | undefined;
+      const activeObject = transform.object;
+      if (activeObject?.userData.cutPlaneHandle) {
+        const axis = cutPlaneRef.current?.axis;
+        if (axis) onCutPositionChangeRef.current?.(activeObject.position[axis]);
+        return;
+      }
+      const mesh = activeObject as THREE.Mesh | undefined;
       const id = mesh?.userData.objectId as string | undefined;
       if (!mesh || !id) return;
       const source = objectsRef.current.find((object) => object.id === id);
@@ -232,7 +280,8 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
     const onPointerDown = (event: PointerEvent) => {
       if (transform.dragging) return;
       getPointer(event);
-      if (event.button === 0 && event.shiftKey && !previewRef.current) {
+      if (cutPlaneRef.current && event.button === 0) return;
+      if (event.button === 0 && event.shiftKey && !previewRef.current && !cutPlaneRef.current) {
         const objectHit = raycaster.intersectObjects([...meshMap.current.values()], false)[0];
         const dimensionHandleHit = raycaster.intersectObjects(dimensionHandles.current, false)[0];
         const transformHandleHit = Boolean(transform.object && transform.axis);
@@ -402,6 +451,20 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
         (previewMeshRef.current.material as THREE.Material).dispose();
         previewMeshRef.current = null;
       }
+      if (cutPlaneGroupRef.current) {
+        transform.detach();
+        scene.remove(cutPlaneGroupRef.current);
+        cutPlaneGroupRef.current.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            child.geometry.dispose();
+            const material = child.material;
+            if (Array.isArray(material)) material.forEach((item) => item.dispose());
+            else material.dispose();
+          }
+        });
+        cutPlaneGroupRef.current = null;
+        cutPlaneSurfaceRef.current = null;
+      }
       delete (host as HTMLDivElement & { __cadScene?: THREE.Scene }).__cadScene;
       renderer.dispose();
       renderer.domElement.remove();
@@ -412,16 +475,32 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
     modeRef.current = mode;
     const transform = transformRef.current;
     const selected = selectedIdRef.current ? meshMap.current.get(selectedIdRef.current) : undefined;
+    const activeCutPlane = cutPlaneRef.current;
+    const cutGroup = cutPlaneGroupRef.current;
     if (transform) {
-      transform.setMode(mode);
-      transform.getHelper().visible = mode !== "scale";
-      if (mode === "scale") transform.detach();
-      else if (selected) transform.attach(selected);
+      if (activeCutPlane && cutGroup?.visible) {
+        if (transform.getMode() !== "translate") transform.setMode("translate");
+        if (transform.space !== "world") transform.setSpace("world");
+        transform.showX = activeCutPlane.axis === "x";
+        transform.showY = activeCutPlane.axis === "y";
+        transform.showZ = activeCutPlane.axis === "z";
+        transform.getHelper().visible = true;
+        if (transform.object !== cutGroup) transform.attach(cutGroup);
+      } else {
+        transform.setSpace("local");
+        transform.showX = true;
+        transform.showY = true;
+        transform.showZ = true;
+        transform.setMode(mode);
+        transform.getHelper().visible = mode !== "scale";
+        if (mode === "scale") transform.detach();
+        else if (selected) transform.attach(selected);
+      }
     }
     dimensionHandles.current.forEach((handle) => {
-      handle.visible = Boolean(selected && mode === "scale");
+      handle.visible = Boolean(selected && mode === "scale" && !activeCutPlane);
     });
-    if (selected) {
+    if (selected && !activeCutPlane) {
       selected.updateMatrixWorld(true);
       dimensionHandles.current.forEach((handle) => {
         const axis = handle.userData.axis as "x" | "y" | "z";
@@ -435,7 +514,6 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
       });
     }
   }, [mode]);
-
   useEffect(() => {
     const host = hostRef.current;
     if (!host?.querySelector("canvas")) return;
@@ -505,12 +583,13 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
     }
 
     const selectedMesh = selectedId ? existing.get(selectedId) : undefined;
+    const activeCutPlane = cutPlane && cutPlane.objectId === selectedId ? cutPlane : null;
     existing.forEach((mesh, id) => { mesh.visible = !(preview && id === preview.objectId); });
     if (preview) {
       let previewMesh = previewMeshRef.current;
       if (!previewMesh) {
         previewMesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshStandardMaterial({ color: "#22d3ee", transparent: true, opacity: 0.92, side: THREE.DoubleSide }));
-        previewMesh.userData.heightCutPreview = true;
+        previewMesh.userData.planarCutPreview = true;
         previewMeshRef.current = previewMesh;
         scene.add(previewMesh);
       }
@@ -523,13 +602,56 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
     } else if (previewMeshRef.current) {
       previewMeshRef.current.visible = false;
     }
-    if (selectedMesh && modeRef.current !== "scale" && !preview) transformRef.current?.attach(selectedMesh);
-    else transformRef.current?.detach();
+
+    const cutGroup = cutPlaneGroupRef.current;
+    const cutSurface = cutPlaneSurfaceRef.current;
+    if (cutGroup && cutSurface && activeCutPlane) {
+      const minimum = new THREE.Vector3(...activeCutPlane.bounds.min);
+      const maximum = new THREE.Vector3(...activeCutPlane.bounds.max);
+      const center = minimum.clone().add(maximum).multiplyScalar(0.5);
+      center[activeCutPlane.axis] = activeCutPlane.position;
+      cutGroup.position.copy(center);
+      const size = maximum.sub(minimum);
+      if (activeCutPlane.axis === "x") {
+        cutSurface.rotation.set(0, Math.PI / 2, 0);
+        cutSurface.scale.set(size.z, size.y, 1);
+      } else if (activeCutPlane.axis === "y") {
+        cutSurface.rotation.set(Math.PI / 2, 0, 0);
+        cutSurface.scale.set(size.x, size.z, 1);
+      } else {
+        cutSurface.rotation.set(0, 0, 0);
+        cutSurface.scale.set(size.x, size.y, 1);
+      }
+      cutGroup.visible = true;
+      cutGroup.updateMatrixWorld(true);
+      if (transformRef.current) {
+        const transform = transformRef.current;
+        if (transform.getMode() !== "translate") transform.setMode("translate");
+        if (transform.space !== "world") transform.setSpace("world");
+        transform.showX = activeCutPlane.axis === "x";
+        transform.showY = activeCutPlane.axis === "y";
+        transform.showZ = activeCutPlane.axis === "z";
+        transform.getHelper().visible = true;
+        if (transform.object !== cutGroup) transform.attach(cutGroup);
+      }
+    } else {
+      if (cutGroup) cutGroup.visible = false;
+      if (transformRef.current) {
+        transformRef.current.setSpace("local");
+        transformRef.current.showX = true;
+        transformRef.current.showY = true;
+        transformRef.current.showZ = true;
+        transformRef.current.setMode(modeRef.current);
+        transformRef.current.getHelper().visible = modeRef.current !== "scale";
+        if (selectedMesh && modeRef.current !== "scale" && !preview) transformRef.current.attach(selectedMesh);
+        else transformRef.current.detach();
+      }
+    }
 
     dimensionHandles.current.forEach((handle) => {
-      handle.visible = Boolean(selectedMesh && modeRef.current === "scale");
+      handle.visible = Boolean(selectedMesh && modeRef.current === "scale" && !activeCutPlane);
     });
-    if (selectedMesh && !preview) {
+    if (selectedMesh && !activeCutPlane && !preview) {
       selectedMesh.updateMatrixWorld(true);
       dimensionHandles.current.forEach((handle) => {
         const axis = handle.userData.axis as "x" | "y" | "z";
@@ -542,7 +664,7 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
         handle.position.copy(selectedMesh.localToWorld(localPoint));
       });
     }
-  }, [objects, selectedId, preview]);
+  }, [objects, selectedId, preview, cutPlane]);
 
   return (
     <div className="viewport-stage">
@@ -567,3 +689,4 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMar
     </div>
   );
 }
+

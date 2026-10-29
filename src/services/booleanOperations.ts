@@ -1,8 +1,10 @@
 import * as THREE from "three";
 import Module from "manifold-3d";
 import type { ProjectObject } from "../domain/project";
+import { hollowCustomMeshInWorker, splitMeshInWorker, subtractMeshInWorker } from "./meshOperationsWorker";
 
 export type BooleanOperation = "union" | "subtract" | "intersect";
+export type CutAxis = "x" | "y" | "z";
 
 type ManifoldApi = Awaited<ReturnType<typeof Module>>;
 let manifoldPromise: Promise<ManifoldApi> | null = null;
@@ -58,6 +60,22 @@ function createWorldGeometry(object: ProjectObject): THREE.BufferGeometry {
   }
   geometry.clearGroups();
   return geometry;
+}
+
+
+function triangleSoup(geometry: THREE.BufferGeometry): Float32Array {
+  const position = geometry.getAttribute("position");
+  if (!position || position.count < 4) throw new Error("La pieza no contiene una malla válida.");
+  const index = geometry.getIndex();
+  if (!index) return Float32Array.from(position.array as ArrayLike<number>);
+  const flattened = new Float32Array(index.count * 3);
+  for (let offset = 0; offset < index.count; offset++) {
+    const vertex = index.getX(offset);
+    flattened[offset * 3] = position.getX(vertex);
+    flattened[offset * 3 + 1] = position.getY(vertex);
+    flattened[offset * 3 + 2] = position.getZ(vertex);
+  }
+  return flattened;
 }
 
 export function calculateObjectBounds(object: ProjectObject): THREE.Box3 {
@@ -217,129 +235,30 @@ async function calculateCustomHollow(object: ProjectObject, wallThickness: numbe
   }
 
   const geometry = createWorldGeometry(object);
-  geometry.computeBoundingBox();
-  const bounds = geometry.boundingBox;
-  if (!bounds) {
-    geometry.dispose();
-    throw new Error("No se pudieron calcular los límites de la malla personalizada.");
-  }
-  const size = bounds.getSize(new THREE.Vector3());
-  const minimumExtent = Math.min(size.x, size.y, size.z);
-  if (!Number.isFinite(minimumExtent) || minimumExtent <= 1e-5) {
-    geometry.dispose();
-    throw new Error("La malla personalizada debe tener volumen en las tres dimensiones.");
-  }
-  if (wallThickness * 2 >= minimumExtent - 1e-5) {
-    geometry.dispose();
-    throw new Error("Ese espesor es demasiado grande para el tamaño de la malla personalizada.");
-  }
-
-  let sourceMesh: any = null;
-  let outer: any = null;
-  let offsetSphere: any = null;
-  let inner: any = null;
-  let shell: any = null;
-  let rotatedInner: any = null;
-  let openingSection: any = null;
-  let openingColumn: any = null;
-  let rotatedOpeningColumn: any = null;
-  let openingCutter: any = null;
-  let hollow: any = null;
-  let outputMesh: any = null;
   try {
-    const wasm = await getManifoldApi();
-    sourceMesh = toManifoldMesh(wasm, geometry);
-    try {
-      outer = new wasm.Manifold(sourceMesh);
-    } catch {
-      throw new Error("La malla personalizada no es un sólido cerrado válido. Revisá la geometría antes de vaciarla.");
+    geometry.computeBoundingBox();
+    const bounds = geometry.boundingBox;
+    if (!bounds) throw new Error("No se pudieron calcular los límites de la malla personalizada.");
+    const size = bounds.getSize(new THREE.Vector3());
+    const minimumExtent = Math.min(size.x, size.y, size.z);
+    if (!Number.isFinite(minimumExtent) || minimumExtent <= 1e-5) {
+      throw new Error("La malla personalizada debe tener volumen en las tres dimensiones.");
     }
-    const outerStatus = outer.status();
-    if (outerStatus !== "NoError" || outer.isEmpty()) {
-      throw new Error("La malla personalizada no es un sólido cerrado válido. Revisá la geometría antes de vaciarla.");
-    }
-    const outerVolume = outer.volume();
-    if (!Number.isFinite(outerVolume) || outerVolume <= 1e-8) {
-      throw new Error("La malla personalizada no es un sólido cerrado válido. Revisá la geometría antes de vaciarla.");
+    if (wallThickness * 2 >= minimumExtent - 1e-5) {
+      throw new Error("Ese espesor es demasiado grande para el tamaño de la malla personalizada.");
     }
 
-    try {
-      offsetSphere = wasm.Manifold.sphere(wallThickness, 32);
-      inner = outer.minkowskiDifference(offsetSphere);
-    } catch {
-      throw new Error("No se pudo calcular el interior de la malla. Probá con un espesor menor.");
-    }
-    const innerStatus = inner.status();
-    if (innerStatus !== "NoError" || inner.isEmpty()) {
-      throw new Error("Ese espesor no deja una cavidad válida dentro de la pieza. Probá con un espesor menor.");
-    }
-    const innerVolume = inner.volume();
-    const volumeTolerance = Math.max(outerVolume * 1e-10, 1e-8);
-    if (!Number.isFinite(innerVolume) || innerVolume <= volumeTolerance || innerVolume >= outerVolume - volumeTolerance) {
-      throw new Error("Ese espesor no deja una cavidad válida dentro de la pieza. Probá con un espesor menor.");
-    }
-
-    shell = outer.subtract(inner);
-    if (hasPlanarTopFace(geometry, bounds)) {
-      const innerBounds = inner.boundingBox();
-      const maxExtent = Math.max(size.x, size.y, size.z);
-      const epsilon = Math.min(Math.max(maxExtent * 1e-5, 1e-4), wallThickness * 0.05);
-      const openingBottom = innerBounds.max[1] - epsilon;
-      const openingTop = bounds.max.y + epsilon;
-      if (openingTop <= openingBottom) {
-        throw new Error("No se pudo abrir la cavidad en la cara superior de la malla.");
-      }
-
-      // Slice the eroded interior at its top face and extrude that exact outline upward.
-      // This keeps the opening inside concave and irregular walls instead of using a box.
-      rotatedInner = inner.rotate([90, 0, 0]);
-      const rotatedBounds = rotatedInner.boundingBox();
-      openingSection = rotatedInner.slice(rotatedBounds.max[2] - epsilon);
-      if (openingSection.numVert() < 3) {
-        throw new Error("No se pudo detectar una abertura válida en la cara superior.");
-      }
-      openingColumn = openingSection.extrude(openingTop - openingBottom);
-      rotatedOpeningColumn = openingColumn.rotate([-90, 0, 0]);
-      openingCutter = rotatedOpeningColumn.translate([0, openingBottom, 0]);
-      try {
-        hollow = shell.subtract(openingCutter);
-      } catch {
-        throw new Error("No se pudo abrir la cavidad en la cara superior. Probá con otro espesor de pared.");
-      }
-    } else {
-      hollow = shell;
-    }
-    const hollowStatus = hollow.status();
-    if (hollowStatus !== "NoError" || hollow.isEmpty()) {
-      throw new Error("El vaciado no pasó la validación geométrica. Probá con un espesor menor.");
-    }
-    const hollowVolume = hollow.volume();
-    if (!Number.isFinite(hollowVolume) || hollowVolume <= volumeTolerance || hollowVolume >= outerVolume - volumeTolerance) {
-      throw new Error("El vaciado no pasó la validación geométrica. Probá con un espesor menor.");
-    }
-
-    outputMesh = hollow.getMesh();
-    const properties = outputMesh.vertProperties as ArrayLike<number>;
-    const indices = outputMesh.triVerts as ArrayLike<number>;
-    const propertyStride = outputMesh.numProp as number;
-    if (propertyStride < 3 || indices.length < 12 || indices.length % 3 !== 0) {
-      throw new Error("El motor devolvió una malla vaciada incompleta.");
-    }
-    const flattened: number[] = [];
-    for (let i = 0; i < indices.length; i++) {
-      const offset = indices[i] * propertyStride;
-      flattened.push(properties[offset], properties[offset + 1], properties[offset + 2]);
-    }
-    if (flattened.length < 36 || flattened.some((value) => !Number.isFinite(value))) {
-      throw new Error("El motor devolvió una malla vaciada inválida.");
-    }
-    return flattened;
+    const vertices = triangleSoup(geometry);
+    return await hollowCustomMeshInWorker(
+      vertices,
+      {
+        min: [bounds.min.x, bounds.min.y, bounds.min.z],
+        max: [bounds.max.x, bounds.max.y, bounds.max.z]
+      },
+      wallThickness,
+      hasPlanarTopFace(geometry, bounds)
+    );
   } finally {
-    outputMesh?.delete?.();
-    openingSection?.delete?.();
-    for (const manifold of new Set([hollow, shell, openingCutter, rotatedOpeningColumn, openingColumn, rotatedInner, inner, offsetSphere, outer, sourceMesh])) {
-      manifold?.delete?.();
-    }
     geometry.dispose();
   }
 }
@@ -440,77 +359,115 @@ export async function calculateHollow(
   return calculateBoolean([object, cutter], "subtract");
 }
 
-/**
- * Cut a mesh with a horizontal plane at an absolute world-space Y height.
- * Returns a closed manifold mesh of the portion below the plane.
- */
-export async function calculateHeightCut(object: ProjectObject, height: number): Promise<number[]> {
-  if (!Number.isFinite(height)) throw new Error("La altura de corte debe ser un número válido.");
-  const geometry = createWorldGeometry(object);
-  geometry.computeBoundingBox();
-  const bounds = geometry.boundingBox;
-  geometry.dispose();
-  if (!bounds) throw new Error("No se pudieron calcular los límites de la pieza.");
-  if (height <= bounds.min.y + 1e-5) throw new Error("La altura elegida dejaría la pieza sin volumen.");
-  if (height >= bounds.max.y - 1e-5) throw new Error("La altura de corte debe estar por debajo de la parte superior de la pieza.");
-  const margin = Math.max(bounds.max.x - bounds.min.x, bounds.max.y - bounds.min.y, bounds.max.z - bounds.min.z, 10) + 10;
+type CutSide = "negative" | "positive";
+
+function validateCutCoordinate(bounds: THREE.Box3, axis: CutAxis, coordinate: number) {
+  if (!Number.isFinite(coordinate)) throw new Error("La posición del corte debe ser un número válido.");
+  const minimum = bounds.min[axis];
+  const maximum = bounds.max[axis];
+  const epsilon = Math.max((maximum - minimum) * 1e-6, 1e-5);
+  if (coordinate <= minimum + epsilon) throw new Error("El corte debe quedar dentro de los límites de la pieza, no en el borde mínimo.");
+  if (coordinate >= maximum - epsilon) throw new Error("El corte debe quedar dentro de los límites de la pieza, no en el borde máximo.");
+}
+
+function createAxisCutter(bounds: THREE.Box3, axis: CutAxis, coordinate: number, removeSide: CutSide): THREE.BufferGeometry {
+  const size = bounds.getSize(new THREE.Vector3());
+  const margin = Math.max(size.x, size.y, size.z, 1) + 1;
+  const minimum = { x: bounds.min.x - margin, y: bounds.min.y - margin, z: bounds.min.z - margin };
+  const maximum = { x: bounds.max.x + margin, y: bounds.max.y + margin, z: bounds.max.z + margin };
+  if (removeSide === "positive") minimum[axis] = coordinate;
+  else maximum[axis] = coordinate;
+
   const cutter: ProjectObject = {
     id: crypto.randomUUID(),
     name: "Plano de corte",
     kind: "box",
     booleanRole: "cutter",
     position: {
-      x: (bounds.min.x + bounds.max.x) / 2,
-      y: (height + bounds.max.y + margin) / 2,
-      z: (bounds.min.z + bounds.max.z) / 2
+      x: (minimum.x + maximum.x) / 2,
+      y: (minimum.y + maximum.y) / 2,
+      z: (minimum.z + maximum.z) / 2
     },
     dimensions: {
-      x: bounds.max.x - bounds.min.x + margin * 2,
-      y: bounds.max.y - height + margin,
-      z: bounds.max.z - bounds.min.z + margin * 2
+      x: maximum.x - minimum.x,
+      y: maximum.y - minimum.y,
+      z: maximum.z - minimum.z
     },
     rotation: { x: 0, y: 0, z: 0 }
   };
-  return calculateBoolean([{ ...object, booleanRole: "solid" }, cutter], "subtract");
+  return createWorldGeometry(cutter);
 }
 
-
-/**
- * Returns the closed upper portion of a mesh cut at an absolute world-space Y height.
- */
-export async function calculateHeightUpper(object: ProjectObject, height: number): Promise<number[]> {
-  if (!Number.isFinite(height)) throw new Error("La altura de corte debe ser un número válido.");
+function getCutGeometry(object: ProjectObject) {
   const geometry = createWorldGeometry(object);
   geometry.computeBoundingBox();
-  const bounds = geometry.boundingBox;
-  geometry.dispose();
-  if (!bounds) throw new Error("No se pudieron calcular los límites de la pieza.");
-  if (height <= bounds.min.y + 1e-5) throw new Error("La altura elegida dejaría la parte superior sin volumen.");
-  if (height >= bounds.max.y - 1e-5) throw new Error("La altura de corte debe estar por debajo de la parte superior de la pieza.");
-  const margin = Math.max(bounds.max.x - bounds.min.x, bounds.max.y - bounds.min.y, bounds.max.z - bounds.min.z, 10) + 10;
-  const cutter: ProjectObject = {
-    id: crypto.randomUUID(), name: "Plano de corte inferior", kind: "box", booleanRole: "cutter",
-    position: {
-      x: (bounds.min.x + bounds.max.x) / 2,
-      y: (bounds.min.y + height - margin) / 2,
-      z: (bounds.min.z + bounds.max.z) / 2
-    },
-    dimensions: {
-      x: bounds.max.x - bounds.min.x + margin * 2,
-      y: height - bounds.min.y + margin,
-      z: bounds.max.z - bounds.min.z + margin * 2
-    },
-    rotation: { x: 0, y: 0, z: 0 }
-  };
-  return calculateBoolean([{ ...object, booleanRole: "solid" }, cutter], "subtract");
+  const bounds = geometry.boundingBox?.clone();
+  if (!bounds) {
+    geometry.dispose();
+    throw new Error("No se pudieron calcular los límites de la pieza.");
+  }
+  return { geometry, bounds };
 }
 
-/** Returns both independent closed solids produced by a horizontal height cut. */
-export async function calculateHeightSplit(object: ProjectObject, height: number): Promise<{ lower: number[]; upper: number[] }> {
-  const [lower, upper] = await Promise.all([
-    calculateHeightCut(object, height),
-    calculateHeightUpper(object, height)
-  ]);
-  return { lower, upper };
+/** Returns the negative-side portion of a mesh cut on a world-space X, Y, or Z plane. */
+export async function calculatePlanarCut(object: ProjectObject, axis: CutAxis, coordinate: number, signal?: AbortSignal): Promise<number[]> {
+  const { geometry, bounds } = getCutGeometry(object);
+  let cutterGeometry: THREE.BufferGeometry | null = null;
+  try {
+    validateCutCoordinate(bounds, axis, coordinate);
+    const source = triangleSoup(geometry);
+    cutterGeometry = createAxisCutter(bounds, axis, coordinate, "positive");
+    return await subtractMeshInWorker(source, triangleSoup(cutterGeometry), signal);
+  } finally {
+    cutterGeometry?.dispose();
+    geometry.dispose();
+  }
 }
+
+/** Returns both independent solids produced by a planar X, Y, or Z cut. */
+export async function calculatePlanarSplit(
+  object: ProjectObject,
+  axis: CutAxis,
+  coordinate: number
+): Promise<{ negative: number[]; positive: number[] }> {
+  const { geometry, bounds } = getCutGeometry(object);
+  let negativeCutterGeometry: THREE.BufferGeometry | null = null;
+  let positiveCutterGeometry: THREE.BufferGeometry | null = null;
+  try {
+    validateCutCoordinate(bounds, axis, coordinate);
+    const source = triangleSoup(geometry);
+    negativeCutterGeometry = createAxisCutter(bounds, axis, coordinate, "negative");
+    positiveCutterGeometry = createAxisCutter(bounds, axis, coordinate, "positive");
+    return await splitMeshInWorker(source, triangleSoup(negativeCutterGeometry), triangleSoup(positiveCutterGeometry));
+  } finally {
+    negativeCutterGeometry?.dispose();
+    positiveCutterGeometry?.dispose();
+    geometry.dispose();
+  }
+}
+
+/** Compatibility wrappers for the original Y-height cut behavior. */
+export function calculateHeightCut(object: ProjectObject, height: number, signal?: AbortSignal): Promise<number[]> {
+  return calculatePlanarCut(object, "y", height, signal);
+}
+
+export async function calculateHeightUpper(object: ProjectObject, height: number): Promise<number[]> {
+  const { geometry, bounds } = getCutGeometry(object);
+  let cutterGeometry: THREE.BufferGeometry | null = null;
+  try {
+    validateCutCoordinate(bounds, "y", height);
+    const source = triangleSoup(geometry);
+    cutterGeometry = createAxisCutter(bounds, "y", height, "negative");
+    return await subtractMeshInWorker(source, triangleSoup(cutterGeometry));
+  } finally {
+    cutterGeometry?.dispose();
+    geometry.dispose();
+  }
+}
+
+export async function calculateHeightSplit(object: ProjectObject, height: number): Promise<{ lower: number[]; upper: number[] }> {
+  const result = await calculatePlanarSplit(object, "y", height);
+  return { lower: result.negative, upper: result.positive };
+}
+
 

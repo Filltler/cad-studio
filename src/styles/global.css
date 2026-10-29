@@ -118,3 +118,17 @@ button { cursor: pointer; }
   .transform-hint { flex-basis: 100%; margin-left: 0; }
 }
 
+
+
+.cut-axis-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; margin: 10px 0 4px; }
+.cut-axis-options button { min-width: 0; padding: 6px 4px; border: 1px solid #334155; border-radius: 6px; color: #cbd5e1; background: #1e293b; font-size: 10px; font-weight: 700; }
+.cut-axis-options button:hover { border-color: #818cf8; color: #fff; }
+.cut-axis-options button.active { border-color: #818cf8; color: #fff; background: #30366b; }
+.cut-axis-label { display: block; margin-bottom: 7px; color: #a5b4fc; font-size: 10px; }
+.height-cut-section input[type="range"] { width: 100%; margin: 5px 0 9px; accent-color: #fbbf24; }
+.height-cut-section > small { display: block; margin: 7px 0; color: #94a3b8; font-size: 10px; line-height: 1.45; }
+.height-cut-section .property-row { grid-template-columns: 54px minmax(0, 1fr); }
+.height-cut-section .primary-button,
+.height-cut-section .secondary-button { width: 100%; margin-top: 6px; }
+
+
