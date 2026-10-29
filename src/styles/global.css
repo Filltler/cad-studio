@@ -125,9 +125,15 @@ button { cursor: pointer; }
 .cut-axis-options button:hover { border-color: #818cf8; color: #fff; }
 .cut-axis-options button.active { border-color: #818cf8; color: #fff; background: #30366b; }
 .cut-axis-label { display: block; margin-bottom: 7px; color: #a5b4fc; font-size: 10px; }
+.cut-tilt-options { display: grid; gap: 5px; margin: 8px 0; padding: 8px; border: 1px solid var(--panel-border); border-radius: 7px; background: #0d1524; }
+.cut-tilt-options > strong { color: #cbd5e1; font-size: 10px; }
+.cut-tilt-options > small { color: #94a3b8; font-size: 9px; line-height: 1.4; }
+.cut-angle-row { display: grid; grid-template-columns: 13px minmax(35px, 1fr) 54px; align-items: center; gap: 5px; color: #cbd5e1; font-size: 9px; }
+.cut-angle-row input[type="range"] { width: 100%; margin: 0; accent-color: #fbbf24; }
+.cut-angle-row input[type="number"] { min-width: 0; width: 100%; padding: 5px; border: 1px solid #334155; border-radius: 5px; color: #e2e8f0; background: #0b1220; font-size: 10px; }
 .height-cut-section input[type="range"] { width: 100%; margin: 5px 0 9px; accent-color: #fbbf24; }
 .height-cut-section > small { display: block; margin: 7px 0; color: #94a3b8; font-size: 10px; line-height: 1.45; }
-.height-cut-section .property-row { grid-template-columns: 54px minmax(0, 1fr); }
+.height-cut-section .property-row { grid-template-columns: minmax(0, 1fr) 92px; gap: 6px; }
 .height-cut-section .primary-button,
 .height-cut-section .secondary-button { width: 100%; margin-top: 6px; }
 .interlock-toggle { display: flex; align-items: center; gap: 7px; margin: 11px 0 6px; color: #cbd5e1; font-size: 10px; line-height: 1.4; }
