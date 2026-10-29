@@ -125,9 +125,27 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       throw new Error("La distribución uniforme necesita al menos tres piezas.");
     }
 
+    const workplaneTieBreakers: Record<AlignmentAxis, [AlignmentAxis, AlignmentAxis]> = {
+      x: ["z", "y"],
+      y: ["x", "z"],
+      z: ["x", "y"]
+    };
+    const centerOn = (bounds: ReturnType<typeof calculateObjectBounds>, coordinate: AlignmentAxis) => (bounds.min[coordinate] + bounds.max[coordinate]) / 2;
     const arranged = selectedObjects
       .map((object) => ({ object, bounds: calculateObjectBounds(object) }))
-      .sort((a, b) => a.bounds.min[axis] - b.bounds.min[axis] || a.object.id.localeCompare(b.object.id));
+      .sort((a, b) => {
+        const axisDelta = centerOn(a.bounds, axis) - centerOn(b.bounds, axis);
+        if (Math.abs(axisDelta) > 0.0005) return axisDelta;
+        for (const tieAxis of workplaneTieBreakers[axis]) {
+          const tieDelta = centerOn(a.bounds, tieAxis) - centerOn(b.bounds, tieAxis);
+          if (Math.abs(tieDelta) > 0.0005) return tieDelta;
+        }
+        const minDelta = a.bounds.min[axis] - b.bounds.min[axis];
+        if (Math.abs(minDelta) > 0.0005) return minDelta;
+        const maxDelta = a.bounds.max[axis] - b.bounds.max[axis];
+        if (Math.abs(maxDelta) > 0.0005) return maxDelta;
+        return a.object.id.localeCompare(b.object.id);
+      });
     const shifts = new Map<string, number>();
 
     if (mode === "fixed") {
