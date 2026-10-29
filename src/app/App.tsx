@@ -582,7 +582,7 @@ export function App() {
                         onChange={(event) => setWallThicknesses((current) => ({ ...current, left: event.target.value }))}
                       />
                     </label>
-                    <small>{selected.kind === "cylinder" ? "El cilindro se convierte en un tubo con agujero pasante." : selected.kind === "custom" ? "La malla queda como una carcasa cerrada con cavidad interna uniforme; el motor comprueba que el resultado sea válido." : "La esfera queda hueca por dentro, con la superficie exterior cerrada."}</small>
+                    <small>{selected.kind === "cylinder" ? "El cilindro se convierte en un tubo con agujero pasante." : selected.kind === "custom" ? "La cavidad se abre por la cara superior plana cuando existe; el motor valida que el resultado sea un sólido correcto." : "La esfera queda hueca por dentro, con la superficie exterior cerrada."}</small>
                   </>
                 )}
                 <button className="primary-button" onClick={handleHollow}>

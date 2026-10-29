@@ -169,7 +169,35 @@ export type HollowWallThickness = {
   bottom: number;
 };
 
-/** Builds a uniformly thick inner cavity for a validated closed custom mesh. */
+/** Detects a meaningful horizontal face at the custom mesh's highest Y coordinate. */
+function hasPlanarTopFace(geometry: THREE.BufferGeometry, bounds: THREE.Box3): boolean {
+  const position = geometry.getAttribute("position");
+  if (!position || position.count < 3) return false;
+
+  const size = bounds.getSize(new THREE.Vector3());
+  const extent = Math.max(size.x, size.y, size.z);
+  const yTolerance = Math.max(extent * 1e-6, 1e-5);
+  const minimumArea = Math.max(size.x * size.z * 1e-6, 1e-5);
+  let topArea = 0;
+
+  for (let index = 0; index + 2 < position.count; index += 3) {
+    const ax = position.getX(index), ay = position.getY(index), az = position.getZ(index);
+    const bx = position.getX(index + 1), by = position.getY(index + 1), bz = position.getZ(index + 1);
+    const cx = position.getX(index + 2), cy = position.getY(index + 2), cz = position.getZ(index + 2);
+    if (Math.abs(ay - bounds.max.y) > yTolerance || Math.abs(by - bounds.max.y) > yTolerance || Math.abs(cy - bounds.max.y) > yTolerance) continue;
+
+    const abx = bx - ax, aby = by - ay, abz = bz - az;
+    const acx = cx - ax, acy = cy - ay, acz = cz - az;
+    const crossX = aby * acz - abz * acy;
+    const crossY = abz * acx - abx * acz;
+    const crossZ = abx * acy - aby * acx;
+    topArea += Math.hypot(crossX, crossY, crossZ) / 2;
+  }
+
+  return topArea > minimumArea;
+}
+
+/** Builds a uniformly thick cavity for a validated closed custom mesh. */
 async function calculateCustomHollow(object: ProjectObject, wallThickness: number): Promise<number[]> {
   if (!Number.isFinite(wallThickness) || wallThickness <= 0) {
     throw new Error("El espesor debe ser mayor que 0 mm.");
@@ -201,6 +229,11 @@ async function calculateCustomHollow(object: ProjectObject, wallThickness: numbe
   let outer: any = null;
   let offsetSphere: any = null;
   let inner: any = null;
+  let shell: any = null;
+  let rotatedInner: any = null;
+  let openingSection: any = null;
+  let openingColumn: any = null;
+  let openingCutter: any = null;
   let hollow: any = null;
   let outputMesh: any = null;
   try {
@@ -236,7 +269,35 @@ async function calculateCustomHollow(object: ProjectObject, wallThickness: numbe
       throw new Error("Ese espesor no deja una cavidad válida dentro de la pieza. Probá con un espesor menor.");
     }
 
-    hollow = outer.subtract(inner);
+    shell = outer.subtract(inner);
+    if (hasPlanarTopFace(geometry, bounds)) {
+      const innerBounds = inner.boundingBox();
+      const maxExtent = Math.max(size.x, size.y, size.z);
+      const epsilon = Math.min(Math.max(maxExtent * 1e-5, 1e-4), wallThickness * 0.05);
+      const openingBottom = innerBounds.max[1] - epsilon;
+      const openingTop = bounds.max.y + epsilon;
+      if (openingTop <= openingBottom) {
+        throw new Error("No se pudo abrir la cavidad en la cara superior de la malla.");
+      }
+
+      // Slice the eroded interior at its top face and extrude that exact outline upward.
+      // This keeps the opening inside concave and irregular walls instead of using a box.
+      rotatedInner = inner.rotate([90, 0, 0]);
+      const rotatedBounds = rotatedInner.boundingBox();
+      openingSection = rotatedInner.slice(rotatedBounds.max[2] - epsilon);
+      if (openingSection.numVert() < 3) {
+        throw new Error("No se pudo detectar una abertura válida en la cara superior.");
+      }
+      openingColumn = openingSection.extrude(openingTop - openingBottom);
+      openingCutter = openingColumn.rotate([-90, 0, 0]).translate([0, openingBottom, 0]);
+      try {
+        hollow = shell.subtract(openingCutter);
+      } catch {
+        throw new Error("No se pudo abrir la cavidad en la cara superior. Probá con otro espesor de pared.");
+      }
+    } else {
+      hollow = shell;
+    }
     const hollowStatus = hollow.status();
     if (hollowStatus !== "NoError" || hollow.isEmpty()) {
       throw new Error("El vaciado no pasó la validación geométrica. Probá con un espesor menor.");
@@ -264,11 +325,10 @@ async function calculateCustomHollow(object: ProjectObject, wallThickness: numbe
     return flattened;
   } finally {
     outputMesh?.delete?.();
-    hollow?.delete?.();
-    inner?.delete?.();
-    offsetSphere?.delete?.();
-    outer?.delete?.();
-    sourceMesh?.delete?.();
+    openingSection?.delete?.();
+    for (const manifold of new Set([hollow, shell, openingCutter, openingColumn, rotatedInner, inner, offsetSphere, outer, sourceMesh])) {
+      manifold?.delete?.();
+    }
     geometry.dispose();
   }
 }
