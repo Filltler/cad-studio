@@ -201,11 +201,7 @@ export function App() {
 
   async function handleHollow() {
     if (!selected) {
-      setNotice("Seleccioná un cubo, cilindro o esfera para vaciarlo.");
-      return;
-    }
-    if (selected.kind !== "box" && selected.kind !== "cylinder" && selected.kind !== "sphere") {
-      setNotice("Esta pieza no admite vaciado todavía.");
+      setNotice("Seleccioná una pieza para vaciarla.");
       return;
     }
     try {
@@ -219,7 +215,7 @@ export function App() {
       };
       const activeValues = selected.kind === "box" ? Object.values(parsedWalls) : [parsedWalls.left];
       if (activeValues.some((value) => !Number.isFinite(value) || value <= 0)) {
-        setNotice("Ingresá espesores mayores que 0 mm en todos los campos.");
+        setNotice("Ingresá espesores mayores que 0 mm en los campos activos.");
         return;
       }
       const vertices = await calculateHollow(selected, selected.kind === "box" ? parsedWalls : parsedWalls.left);
@@ -227,7 +223,11 @@ export function App() {
       setBooleanSelection([]);
       setNotice(selected.kind === "cylinder"
         ? `Tubo generado con pared de ${parsedWalls.left} mm.`
-        : selected.kind === "sphere" ? "Esfera hueca generada con pared de " + parsedWalls.left + " mm." : "Vaciado completado con espesores independientes.");
+        : selected.kind === "sphere"
+          ? `Esfera hueca generada con pared de ${parsedWalls.left} mm.`
+          : selected.kind === "custom"
+            ? `Malla personalizada vaciada con pared uniforme de ${parsedWalls.left} mm.`
+            : "Vaciado completado con espesores independientes.");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "No se pudo vaciar la pieza.");
     }
@@ -574,7 +574,7 @@ export function App() {
                     <label className="property-row">
                       <span>{selected.kind === "cylinder" ? "Espesor radial" : "Espesor de pared"}</span>
                       <input
-                        aria-label={selected.kind === "cylinder" ? "Espesor radial para vaciado cilíndrico" : "Espesor de pared para vaciado esférico"}
+                        aria-label={selected.kind === "cylinder" ? "Espesor radial para vaciado cilíndrico" : selected.kind === "custom" ? "Espesor de pared para vaciado de malla personalizada" : "Espesor de pared para vaciado esférico"}
                         type="number"
                         min="0.1"
                         step="0.1"
@@ -582,7 +582,7 @@ export function App() {
                         onChange={(event) => setWallThicknesses((current) => ({ ...current, left: event.target.value }))}
                       />
                     </label>
-                    <small>{selected.kind === "cylinder" ? "El cilindro se convierte en un tubo con agujero pasante." : "La esfera queda hueca por dentro, con la superficie exterior cerrada."}</small>
+                    <small>{selected.kind === "cylinder" ? "El cilindro se convierte en un tubo con agujero pasante." : selected.kind === "custom" ? "La cavidad se abre por la cara superior plana cuando existe; el motor valida que el resultado sea un sólido correcto." : "La esfera queda hueca por dentro, con la superficie exterior cerrada."}</small>
                   </>
                 )}
                 <button className="primary-button" onClick={handleHollow}>

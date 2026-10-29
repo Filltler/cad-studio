@@ -160,11 +160,7 @@ export async function calculateBoolean(objects: ProjectObject[], operation: Bool
 }
 
 
-/**
- * Creates a true hollow primitive by subtracting an inner cutter.
- * Boxes become open-top containers; cylinders become tubes with a through-bore; spheres become closed hollow shells.
- * Dimensions and positions are expressed in millimeters.
- */
+/** Per-face wall thicknesses for the open-top box hollowing operation. */
 export type HollowWallThickness = {
   left: number;
   right: number;
@@ -173,14 +169,185 @@ export type HollowWallThickness = {
   bottom: number;
 };
 
+/** Detects a meaningful horizontal face at the custom mesh's highest Y coordinate. */
+function hasPlanarTopFace(geometry: THREE.BufferGeometry, bounds: THREE.Box3): boolean {
+  const position = geometry.getAttribute("position");
+  if (!position || position.count < 3) return false;
+
+  const size = bounds.getSize(new THREE.Vector3());
+  const extent = Math.max(size.x, size.y, size.z);
+  const yTolerance = Math.max(extent * 1e-6, 1e-5);
+  const minimumArea = Math.max(size.x * size.z * 1e-6, 1e-5);
+  let topArea = 0;
+
+  for (let index = 0; index + 2 < position.count; index += 3) {
+    const ax = position.getX(index), ay = position.getY(index), az = position.getZ(index);
+    const bx = position.getX(index + 1), by = position.getY(index + 1), bz = position.getZ(index + 1);
+    const cx = position.getX(index + 2), cy = position.getY(index + 2), cz = position.getZ(index + 2);
+    if (Math.abs(ay - bounds.max.y) > yTolerance || Math.abs(by - bounds.max.y) > yTolerance || Math.abs(cy - bounds.max.y) > yTolerance) continue;
+
+    const abx = bx - ax, aby = by - ay, abz = bz - az;
+    const acx = cx - ax, acy = cy - ay, acz = cz - az;
+    const crossX = aby * acz - abz * acy;
+    const crossY = abz * acx - abx * acz;
+    const crossZ = abx * acy - aby * acx;
+    topArea += Math.hypot(crossX, crossY, crossZ) / 2;
+  }
+
+  return topArea > minimumArea;
+}
+
+/** Builds a uniformly thick cavity for a validated closed custom mesh. */
+async function calculateCustomHollow(object: ProjectObject, wallThickness: number): Promise<number[]> {
+  if (!Number.isFinite(wallThickness) || wallThickness <= 0) {
+    throw new Error("El espesor debe ser mayor que 0 mm.");
+  }
+  const sourceVertices = object.geometryVertices ?? [];
+  if (sourceVertices.length < 36 || sourceVertices.length % 9 !== 0 || sourceVertices.some((value) => !Number.isFinite(value))) {
+    throw new Error("La malla personalizada no contiene triángulos cerrados válidos.");
+  }
+
+  const geometry = createWorldGeometry(object);
+  geometry.computeBoundingBox();
+  const bounds = geometry.boundingBox;
+  if (!bounds) {
+    geometry.dispose();
+    throw new Error("No se pudieron calcular los límites de la malla personalizada.");
+  }
+  const size = bounds.getSize(new THREE.Vector3());
+  const minimumExtent = Math.min(size.x, size.y, size.z);
+  if (!Number.isFinite(minimumExtent) || minimumExtent <= 1e-5) {
+    geometry.dispose();
+    throw new Error("La malla personalizada debe tener volumen en las tres dimensiones.");
+  }
+  if (wallThickness * 2 >= minimumExtent - 1e-5) {
+    geometry.dispose();
+    throw new Error("Ese espesor es demasiado grande para el tamaño de la malla personalizada.");
+  }
+
+  let sourceMesh: any = null;
+  let outer: any = null;
+  let offsetSphere: any = null;
+  let inner: any = null;
+  let shell: any = null;
+  let rotatedInner: any = null;
+  let openingSection: any = null;
+  let openingColumn: any = null;
+  let rotatedOpeningColumn: any = null;
+  let openingCutter: any = null;
+  let hollow: any = null;
+  let outputMesh: any = null;
+  try {
+    const wasm = await getManifoldApi();
+    sourceMesh = toManifoldMesh(wasm, geometry);
+    try {
+      outer = new wasm.Manifold(sourceMesh);
+    } catch {
+      throw new Error("La malla personalizada no es un sólido cerrado válido. Revisá la geometría antes de vaciarla.");
+    }
+    const outerStatus = outer.status();
+    if (outerStatus !== "NoError" || outer.isEmpty()) {
+      throw new Error("La malla personalizada no es un sólido cerrado válido. Revisá la geometría antes de vaciarla.");
+    }
+    const outerVolume = outer.volume();
+    if (!Number.isFinite(outerVolume) || outerVolume <= 1e-8) {
+      throw new Error("La malla personalizada no es un sólido cerrado válido. Revisá la geometría antes de vaciarla.");
+    }
+
+    try {
+      offsetSphere = wasm.Manifold.sphere(wallThickness, 32);
+      inner = outer.minkowskiDifference(offsetSphere);
+    } catch {
+      throw new Error("No se pudo calcular el interior de la malla. Probá con un espesor menor.");
+    }
+    const innerStatus = inner.status();
+    if (innerStatus !== "NoError" || inner.isEmpty()) {
+      throw new Error("Ese espesor no deja una cavidad válida dentro de la pieza. Probá con un espesor menor.");
+    }
+    const innerVolume = inner.volume();
+    const volumeTolerance = Math.max(outerVolume * 1e-10, 1e-8);
+    if (!Number.isFinite(innerVolume) || innerVolume <= volumeTolerance || innerVolume >= outerVolume - volumeTolerance) {
+      throw new Error("Ese espesor no deja una cavidad válida dentro de la pieza. Probá con un espesor menor.");
+    }
+
+    shell = outer.subtract(inner);
+    if (hasPlanarTopFace(geometry, bounds)) {
+      const innerBounds = inner.boundingBox();
+      const maxExtent = Math.max(size.x, size.y, size.z);
+      const epsilon = Math.min(Math.max(maxExtent * 1e-5, 1e-4), wallThickness * 0.05);
+      const openingBottom = innerBounds.max[1] - epsilon;
+      const openingTop = bounds.max.y + epsilon;
+      if (openingTop <= openingBottom) {
+        throw new Error("No se pudo abrir la cavidad en la cara superior de la malla.");
+      }
+
+      // Slice the eroded interior at its top face and extrude that exact outline upward.
+      // This keeps the opening inside concave and irregular walls instead of using a box.
+      rotatedInner = inner.rotate([90, 0, 0]);
+      const rotatedBounds = rotatedInner.boundingBox();
+      openingSection = rotatedInner.slice(rotatedBounds.max[2] - epsilon);
+      if (openingSection.numVert() < 3) {
+        throw new Error("No se pudo detectar una abertura válida en la cara superior.");
+      }
+      openingColumn = openingSection.extrude(openingTop - openingBottom);
+      rotatedOpeningColumn = openingColumn.rotate([-90, 0, 0]);
+      openingCutter = rotatedOpeningColumn.translate([0, openingBottom, 0]);
+      try {
+        hollow = shell.subtract(openingCutter);
+      } catch {
+        throw new Error("No se pudo abrir la cavidad en la cara superior. Probá con otro espesor de pared.");
+      }
+    } else {
+      hollow = shell;
+    }
+    const hollowStatus = hollow.status();
+    if (hollowStatus !== "NoError" || hollow.isEmpty()) {
+      throw new Error("El vaciado no pasó la validación geométrica. Probá con un espesor menor.");
+    }
+    const hollowVolume = hollow.volume();
+    if (!Number.isFinite(hollowVolume) || hollowVolume <= volumeTolerance || hollowVolume >= outerVolume - volumeTolerance) {
+      throw new Error("El vaciado no pasó la validación geométrica. Probá con un espesor menor.");
+    }
+
+    outputMesh = hollow.getMesh();
+    const properties = outputMesh.vertProperties as ArrayLike<number>;
+    const indices = outputMesh.triVerts as ArrayLike<number>;
+    const propertyStride = outputMesh.numProp as number;
+    if (propertyStride < 3 || indices.length < 12 || indices.length % 3 !== 0) {
+      throw new Error("El motor devolvió una malla vaciada incompleta.");
+    }
+    const flattened: number[] = [];
+    for (let i = 0; i < indices.length; i++) {
+      const offset = indices[i] * propertyStride;
+      flattened.push(properties[offset], properties[offset + 1], properties[offset + 2]);
+    }
+    if (flattened.length < 36 || flattened.some((value) => !Number.isFinite(value))) {
+      throw new Error("El motor devolvió una malla vaciada inválida.");
+    }
+    return flattened;
+  } finally {
+    outputMesh?.delete?.();
+    openingSection?.delete?.();
+    for (const manifold of new Set([hollow, shell, openingCutter, rotatedOpeningColumn, openingColumn, rotatedInner, inner, offsetSphere, outer, sourceMesh])) {
+      manifold?.delete?.();
+    }
+    geometry.dispose();
+  }
+}
+
 /**
- * Creates an open-top box with independently configurable wall thicknesses,
- * or a cylindrical tube using the left value as radial wall thickness.
+ * Creates a hollow result for supported primitives and custom closed meshes.
+ * Custom meshes use a spherical inward offset and are checked as manifold solids.
  */
 export async function calculateHollow(
   object: ProjectObject,
   thickness: number | HollowWallThickness
 ): Promise<number[]> {
+  if (object.kind === "custom") {
+    const wallThickness = typeof thickness === "number" ? thickness : thickness.left;
+    return calculateCustomHollow(object, wallThickness);
+  }
+
   if (object.kind === "sphere") {
     const wallThickness = typeof thickness === "number" ? thickness : thickness.left;
     if (!Number.isFinite(wallThickness) || wallThickness <= 0) {
@@ -263,7 +430,6 @@ export async function calculateHollow(
   };
   return calculateBoolean([object, cutter], "subtract");
 }
-
 
 /**
  * Cut a mesh with a horizontal plane at an absolute world-space Y height.
