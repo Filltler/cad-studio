@@ -44,7 +44,6 @@ button { cursor: pointer; }
 .alignment-axis b { color: #a5b4fc; font-size: 10px; }
 .alignment-axis button { min-width: 0; padding: 5px 2px; font-size: 9px; }
 .alignment-axis button:disabled { cursor: not-allowed; opacity: .45; }
-
 .object-list { padding: 0 9px; overflow-y: auto; }
 .object-row { width: 100%; display: flex; align-items: center; gap: 9px; padding: 10px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: #cbd5e1; text-align: left; font-size: 12px; }
 .object-row.selected { background: #242e4d; border-color: #4f5eaa; color: white; }
@@ -94,5 +93,4 @@ button { cursor: pointer; }
 @media (max-width: 1100px) {
   .transform-hint { flex-basis: 100%; margin-left: 0; }
 }
-
 
