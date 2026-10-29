@@ -4,7 +4,7 @@ import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
 import { Viewport } from "../features/viewport/Viewport";
 import { useEditorStore } from "../features/editor/editorStore";
 import { listProjects, loadProject, saveProject } from "../services/storage/projectStorage";
-import { calculateBoolean, calculatePlanarCut, calculatePlanarSplit, calculateHollow, calculateObjectBounds, type BooleanOperation, type CutAxis } from "../services/booleanOperations";
+import { addInterlocksToPlanarSplit, calculateBoolean, calculatePlanarCut, calculatePlanarSplit, calculateHollow, calculateObjectBounds, getPlanarCutFaceBounds, suggestPlanarInterlocks, type BooleanOperation, type CutAxis, type InterlockShape } from "../services/booleanOperations";
 import { parseSTL } from "../services/stlImport";
 
 export function App() {
@@ -22,6 +22,10 @@ export function App() {
   const [cutPreview, setCutPreview] = useState<{ objectId: string; vertices: number[] } | null>(null);
   const [cutBusy, setCutBusy] = useState(false);
   const [hollowBusy, setHollowBusy] = useState(false);
+  const [interlocksEnabled, setInterlocksEnabled] = useState(false);
+  const [interlockShape, setInterlockShape] = useState<InterlockShape>("elastic");
+  const [interlockCount, setInterlockCount] = useState("2");
+  const [interlockClearance, setInterlockClearance] = useState("0.25");
   const [projectId, setProjectId] = useState("local-project");
   const [projectName, setProjectName] = useState("Mi primer proyecto");
   const [projects, setProjects] = useState<Array<{ id: string; name: string; updatedAt: string }>>([]);
@@ -73,6 +77,16 @@ export function App() {
       }
     };
   }, [cutEnabled, selected, cutBounds, cutAxis, cutPositionValid, parsedCutPosition]);
+  const cutFaceBounds = useMemo(() => {
+    if (!cutPreview || cutPreview.objectId !== selectedId || !cutPositionValid) return null;
+    return getPlanarCutFaceBounds(cutPreview.vertices, cutAxis, parsedCutPosition);
+  }, [cutPreview, selectedId, cutAxis, parsedCutPosition, cutPositionValid]);
+  const parsedInterlockCount = Number(interlockCount);
+  const parsedInterlockClearance = Number(interlockClearance);
+  const interlockSuggestion = cutBounds
+    ? suggestPlanarInterlocks(cutFaceBounds, cutBounds, cutAxis, parsedCutPosition, parsedInterlockCount)
+    : null;
+  const interlockClearanceValid = Number.isFinite(parsedInterlockClearance) && parsedInterlockClearance >= 0.1 && parsedInterlockClearance <= 1;
 
   const getBedBaseY = (object: typeof objects[number]) => {
     if (object.kind !== "custom") return object.position.y - object.dimensions.y / 2;
@@ -300,18 +314,40 @@ export function App() {
       setNotice("Esperá a que la vista previa del corte esté lista.");
       return;
     }
+    if (interlocksEnabled && (!cutBounds || !interlockSuggestion?.available || !interlockClearanceValid)) {
+      setNotice("No hay espacio suficiente para esos encastres. Probá con menos encastres, revisá la holgura o mové el corte.");
+      return;
+    }
     setCutBusy(true);
     const axisLabel = cutAxis.toUpperCase();
-    setNotice("Calculando las dos partes del corte…");
+    setNotice(interlocksEnabled ? "Calculando el corte y los encastres…" : "Calculando las dos partes del corte…");
     try {
-      const parts = await calculatePlanarSplit(selected, cutAxis, parsedCutPosition);
-      const negativeLabel = cutAxis === "y" ? "inferior" : "lado −" + axisLabel;
-      const positiveLabel = cutAxis === "y" ? "superior" : "lado +" + axisLabel;
+      const cutParts = await calculatePlanarSplit(selected, cutAxis, parsedCutPosition);
+      let parts = cutParts;
+      if (interlocksEnabled && cutBounds) {
+        parts = await addInterlocksToPlanarSplit(
+          cutParts,
+          cutAxis,
+          parsedCutPosition,
+          cutBounds,
+          interlockShape,
+          parsedInterlockCount,
+          parsedInterlockClearance
+        );
+      }
+      let negativeLabel = cutAxis === "y" ? "inferior" : "lado −" + axisLabel;
+      let positiveLabel = cutAxis === "y" ? "superior" : "lado +" + axisLabel;
+      if (interlocksEnabled) {
+        negativeLabel += " · macho";
+        positiveLabel += " · hembra";
+      }
       applyPlanarSplitResult(selected.id, "Corte " + axisLabel + " · " + selected.name, parts.negative, parts.positive, negativeLabel, positiveLabel);
       setBooleanSelection((current) => current.filter((id) => id !== selected.id));
       setCutEnabled(false);
       setCutPreview(null);
-      setNotice("Corte confirmado en " + axisLabel + " = " + parsedCutPosition.toFixed(3) + " mm. Se crearon dos objetos independientes; podés deshacerlo.");
+      setNotice(interlocksEnabled
+        ? "Corte confirmado con " + parsedInterlockCount + " encastres " + (interlockShape === "elastic" ? "elásticos" : interlockShape === "round" ? "guías redondas" : "guías cuadradas") + " de " + interlockSuggestion!.diameter.toFixed(1) + " mm y holgura de " + parsedInterlockClearance.toFixed(2) + " mm por lado. Podés deshacerlo."
+        : "Corte confirmado en " + axisLabel + " = " + parsedCutPosition.toFixed(3) + " mm. Se crearon dos objetos independientes; podés deshacerlo.");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "No se pudieron generar las dos partes del corte.");
     } finally {
@@ -793,7 +829,44 @@ export function App() {
                     />
                     <small>Límites: {roundForDisplay(cutBounds?.min[cutAxis] ?? 0)} a {roundForDisplay(cutBounds?.max[cutAxis] ?? 0)} mm. El plano solo puede quedar dentro de la pieza.</small>
                     <small>{cutBusy ? "Calculando vista previa…" : cutPreview ? "Arrastrá el control sobre el plano para ajustar el corte. Al confirmar se crearán ambas partes." : "Mové el plano o el deslizador para actualizar la vista previa."}</small>
-                    <button className="primary-button" disabled={!cutPreview || cutBusy || !cutPositionValid} onClick={confirmPlanarCut}>Confirmar corte</button>
+                    <label className="interlock-toggle">
+                      <input type="checkbox" checked={interlocksEnabled} onChange={(event) => setInterlocksEnabled(event.target.checked)} />
+                      <span>Agregar encastres macho/hembra</span>
+                    </label>
+                    {interlocksEnabled && (
+                      <div className="interlock-options">
+                        <label>
+                          <span>Tipo</span>
+                          <select value={interlockShape} onChange={(event) => setInterlockShape(event.target.value as InterlockShape)}>
+                            <option value="elastic">Clip elástico · traba</option>
+                            <option value="round">Guía redonda</option>
+                            <option value="square">Guía cuadrada</option>
+                          </select>
+                        </label>
+                        <label>
+                          <span>Cantidad</span>
+                          <select value={interlockCount} onChange={(event) => setInterlockCount(event.target.value)}>
+                            {[1, 2, 3, 4, 5, 6].map((count) => <option key={count} value={count}>{count}</option>)}
+                          </select>
+                        </label>
+                        <label>
+                          <span>Holgura por lado · mm</span>
+                          <input type="number" min="0.1" max="1" step="0.05" value={interlockClearance} onChange={(event) => setInterlockClearance(event.target.value)} />
+                        </label>
+                        <small>
+                          {interlockSuggestion?.available
+                            ? (interlockShape === "elastic"
+                              ? "Traba automática: dos patas flexibles de " + interlockSuggestion.diameter.toFixed(1) + " mm · profundidad " + interlockSuggestion.depth.toFixed(1) + " mm. Conviene PETG o TPU."
+                              : "Tamaño automático: " + (interlockShape === "round" ? "Ø" : "lado ") + interlockSuggestion.diameter.toFixed(1) + " mm · profundidad " + interlockSuggestion.depth.toFixed(1) + " mm. Las guías alinean, no traban.")
+                            : "No hay superficie suficiente para encastres de ese tamaño. Probá con menos piezas o mové el corte."}
+                        </small>
+                      </div>
+                    )}
+                    <button
+                      className="primary-button"
+                      disabled={!cutPreview || cutBusy || !cutPositionValid || (interlocksEnabled && (!interlockSuggestion?.available || !interlockClearanceValid))}
+                      onClick={confirmPlanarCut}
+                    >Confirmar corte</button>
                     <button className="secondary-button" onClick={cancelHeightCut}>Cancelar corte</button>
                   </>
                 )}
@@ -863,4 +936,3 @@ export function App() {
     </main>
   );
 }
-

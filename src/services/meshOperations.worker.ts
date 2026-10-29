@@ -3,7 +3,8 @@ import Module from "manifold-3d";
 type WorkerRequest =
   | { id: number; kind: "hollow"; vertices: Float32Array; bounds: { min: [number, number, number]; max: [number, number, number] }; thickness: number; openTop: boolean }
   | { id: number; kind: "subtract"; source: Float32Array; cutter: Float32Array }
-  | { id: number; kind: "split"; source: Float32Array; negativeCutter: Float32Array; positiveCutter: Float32Array };
+  | { id: number; kind: "split"; source: Float32Array; negativeCutter: Float32Array; positiveCutter: Float32Array }
+  | { id: number; kind: "interlock"; negative: Float32Array; positive: Float32Array; pegs: Float32Array[]; sockets: Float32Array[] };
 type WorkerResponse = { id: number; vertices?: Float32Array; negative?: Float32Array; positive?: Float32Array; error?: string };
 type WorkerScope = {
   addEventListener(type: "message", listener: (event: MessageEvent<WorkerRequest>) => void): void;
@@ -176,7 +177,9 @@ scope.addEventListener("message", (event) => {
         scope.postMessage({ id: request.id, vertices }, [vertices.buffer]);
         return;
       }
-      const source = makeSolid(wasm, request.source, meshes, solids);
+      const source = request.kind === "interlock"
+        ? makeSolid(wasm, request.negative, meshes, solids)
+        : makeSolid(wasm, request.source, meshes, solids);
       if (request.kind === "subtract") {
         const cutter = makeSolid(wasm, request.cutter, meshes, solids);
         const result = source.subtract(cutter);
@@ -185,6 +188,53 @@ scope.addEventListener("message", (event) => {
         outputMesh = result.getMesh();
         const vertices = toTriangleSoup(outputMesh);
         scope.postMessage({ id: request.id, vertices }, [vertices.buffer]);
+        return;
+      }
+      if (request.kind === "interlock") {
+        const positive = makeSolid(wasm, request.positive, meshes, solids);
+        if (request.pegs.length === 0 || request.pegs.length !== request.sockets.length) {
+          throw new Error("La cantidad de encastres macho y hembra debe coincidir.");
+        }
+        let negativeResult = source;
+        let positiveResult = positive;
+        for (let index = 0; index < request.pegs.length; index++) {
+          const peg = makeSolid(wasm, request.pegs[index], meshes, solids);
+          const pegContact = peg.intersect(source);
+          solids.add(pegContact);
+          if (pegContact.status() !== "NoError" || pegContact.volume() <= 1e-8) {
+            throw new Error("El encastre macho " + (index + 1) + " no apoya sobre la pieza. Probá con menos encastres o un corte distinto.");
+          }
+          const joinedNegative = negativeResult.add(peg);
+          solids.add(joinedNegative);
+          negativeResult = joinedNegative;
+
+          const socket = makeSolid(wasm, request.sockets[index], meshes, solids);
+          const socketContact = socket.intersect(positive);
+          solids.add(socketContact);
+          if (socketContact.status() !== "NoError" || socketContact.volume() <= 1e-8) {
+            throw new Error("El encastre hembra " + (index + 1) + " no entra en la pieza. Probá con menos encastres o un corte distinto.");
+          }
+          const cutPositive = positiveResult.subtract(socket);
+          solids.add(cutPositive);
+          positiveResult = cutPositive;
+        }
+        const originalNegativeVolume = source.volume();
+        const originalPositiveVolume = positive.volume();
+        const negativeVolume = checkSolid(negativeResult, "El lado macho no produjo un sólido válido.");
+        const positiveVolume = checkSolid(positiveResult, "El lado hembra no produjo un sólido válido.");
+        if (negativeVolume <= originalNegativeVolume + 1e-8 || positiveVolume >= originalPositiveVolume - 1e-8) {
+          throw new Error("No se pudieron integrar los encastres en las dos mitades.");
+        }
+        const negativeMesh = negativeResult.getMesh();
+        const positiveMesh = positiveResult.getMesh();
+        try {
+          const negativeVertices = toTriangleSoup(negativeMesh);
+          const positiveVertices = toTriangleSoup(positiveMesh);
+          scope.postMessage({ id: request.id, negative: negativeVertices, positive: positiveVertices }, [negativeVertices.buffer, positiveVertices.buffer]);
+        } finally {
+          negativeMesh.delete?.();
+          positiveMesh.delete?.();
+        }
         return;
       }
       const negativeCutter = makeSolid(wasm, request.negativeCutter, meshes, solids);
@@ -213,5 +263,4 @@ scope.addEventListener("message", (event) => {
     }
   })();
 });
-
 
