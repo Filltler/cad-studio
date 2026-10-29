@@ -60,6 +60,15 @@ function createWorldGeometry(object: ProjectObject): THREE.BufferGeometry {
   return geometry;
 }
 
+export function calculateObjectBounds(object: ProjectObject): THREE.Box3 {
+  const geometry = createWorldGeometry(object);
+  geometry.computeBoundingBox();
+  const bounds = geometry.boundingBox?.clone() ?? null;
+  geometry.dispose();
+  if (!bounds) throw new Error("No se pudieron calcular los límites del objeto para alinearlo.");
+  return bounds;
+}
+
 function toManifoldMesh(wasm: ManifoldApi, geometry: THREE.BufferGeometry) {
   const position = geometry.getAttribute("position");
   if (!position || position.count < 4) throw new Error("Una de las piezas no contiene una malla válida.");
@@ -504,3 +513,4 @@ export async function calculateHeightSplit(object: ProjectObject, height: number
   ]);
   return { lower, upper };
 }
+
