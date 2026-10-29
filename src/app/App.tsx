@@ -856,7 +856,7 @@ export function App() {
                         <small>
                           {interlockSuggestion?.available
                             ? (interlockShape === "elastic"
-                              ? "Traba automática: pestaña flexible de " + interlockSuggestion.diameter.toFixed(1) + " mm · profundidad " + interlockSuggestion.depth.toFixed(1) + " mm. Conviene PETG o TPU."
+                              ? "Traba automática: dos patas flexibles de " + interlockSuggestion.diameter.toFixed(1) + " mm · profundidad " + interlockSuggestion.depth.toFixed(1) + " mm. Conviene PETG o TPU."
                               : "Tamaño automático: " + (interlockShape === "round" ? "Ø" : "lado ") + interlockSuggestion.diameter.toFixed(1) + " mm · profundidad " + interlockSuggestion.depth.toFixed(1) + " mm. Las guías alinean, no traban.")
                             : "No hay superficie suficiente para encastres de ese tamaño. Probá con menos piezas o mové el corte."}
                         </small>

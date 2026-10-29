@@ -542,12 +542,15 @@ function makeElasticSnapGeometry(
   coordinate: number,
   width: number
 ): THREE.BufferGeometry {
+  const signedArea = points.reduce((area, [shortOffset, axisOffset], index) => {
+    const next = points[(index + 1) % points.length];
+    return area + shortOffset * next[1] - next[0] * axisOffset;
+  }, 0);
+  const orderedPoints = signedArea >= 0 ? points : [...points].reverse();
   const profile = new THREE.Shape();
-  points.forEach(([shortOffset, axisOffset], index) => {
-    const shortPosition = shortOffset;
-    const axisPosition = axisOffset;
-    if (index === 0) profile.moveTo(shortPosition, axisPosition);
-    else profile.lineTo(shortPosition, axisPosition);
+  orderedPoints.forEach(([shortOffset, axisOffset], index) => {
+    if (index === 0) profile.moveTo(shortOffset, axisOffset);
+    else profile.lineTo(shortOffset, axisOffset);
   });
   profile.closePath();
   const geometry = new THREE.ExtrudeGeometry(profile, { depth: width, bevelEnabled: false, steps: 1, curveSegments: 1 });
@@ -582,6 +585,16 @@ function makeElasticSnapGeometry(
   geometry.computeBoundingSphere();
   return geometry;
 }
+function combineTriangleSoups(parts: Float32Array[]): Float32Array {
+  const totalLength = parts.reduce((total, part) => total + part.length, 0);
+  const combined = new Float32Array(totalLength);
+  let offset = 0;
+  for (const part of parts) {
+    combined.set(part, offset);
+    offset += part.length;
+  }
+  return combined;
+}
 export async function addInterlocksToPlanarSplit(
   parts: { negative: number[]; positive: number[] },
   axis: CutAxis,
@@ -613,52 +626,70 @@ export async function addInterlocksToPlanarSplit(
   center[shortAxis] = (shortMinimum + shortMaximum) / 2;
   const pegGeometries: THREE.BufferGeometry[] = [];
   const socketGeometries: THREE.BufferGeometry[] = [];
-  let pegs: Float32Array[] = [];
-  let sockets: Float32Array[] = [];
+  const pegs: Float32Array[] = [];
   try {
     for (let index = 0; index < count; index++) {
       center[longAxis] = longMinimum + longSize * (index + 1) / (count + 1);
       if (shape === "elastic") {
         const stemWidth = Math.min(1, Math.max(0.65, suggestion.diameter * 0.16));
+        const gap = stemWidth * 0.65;
         const hookHeight = Math.min(0.9, Math.max(0.45, suggestion.diameter * 0.14));
         const shoulderDepth = Math.min(1.2, suggestion.depth * 0.3);
         const rampLength = Math.min(0.9, suggestion.depth * 0.24);
         const shoulderStart = suggestion.depth - shoulderDepth;
         const rampStart = suggestion.depth - rampLength;
-        pegGeometries.push(makeElasticSnapGeometry([
-          [-stemWidth / 2, -suggestion.embed],
-          [stemWidth / 2, -suggestion.embed],
-          [stemWidth / 2, shoulderStart],
-          [stemWidth / 2 + hookHeight, shoulderStart],
-          [stemWidth / 2 + hookHeight, rampStart],
-          [stemWidth / 2, suggestion.depth],
-          [-stemWidth / 2, suggestion.depth]
-        ], axis, shortAxis, longAxis, center[shortAxis], center[longAxis], coordinate, suggestion.diameter));
-        const channelHalfWidth = stemWidth / 2 + clearance;
-        const pocketEnd = stemWidth / 2 + hookHeight + clearance;
-        socketGeometries.push(makeElasticSnapGeometry([
+        const prongCenter = stemWidth / 2 + gap / 2;
+        const rightProng = [
+          [prongCenter - stemWidth / 2, -suggestion.embed],
+          [prongCenter + stemWidth / 2, -suggestion.embed],
+          [prongCenter + stemWidth / 2, shoulderStart],
+          [prongCenter + stemWidth / 2 + hookHeight, shoulderStart],
+          [prongCenter + stemWidth / 2 + hookHeight, rampStart],
+          [prongCenter + stemWidth / 2, suggestion.depth],
+          [prongCenter - stemWidth / 2, suggestion.depth]
+        ] as Array<[number, number]>;
+        const leftProng = rightProng.map(([shortOffset, axisOffset]) => [-shortOffset, axisOffset] as [number, number]);
+        const rightGeometry = makeElasticSnapGeometry(
+          rightProng, axis, shortAxis, longAxis,
+          center[shortAxis], center[longAxis], coordinate, suggestion.diameter
+        );
+        const leftGeometry = makeElasticSnapGeometry(
+          leftProng, axis, shortAxis, longAxis,
+          center[shortAxis], center[longAxis], coordinate, suggestion.diameter
+        );
+        pegGeometries.push(rightGeometry, leftGeometry);
+        pegs.push(combineTriangleSoups([triangleSoup(rightGeometry), triangleSoup(leftGeometry)]));
+
+        const channelHalfWidth = prongCenter + stemWidth / 2 + clearance;
+        const pocketHalfWidth = channelHalfWidth + hookHeight;
+        const socketGeometry = makeElasticSnapGeometry([
           [-channelHalfWidth, -0.05],
           [channelHalfWidth, -0.05],
           [channelHalfWidth, shoulderStart],
-          [pocketEnd, shoulderStart],
-          [pocketEnd, suggestion.depth + 0.35],
-          [-channelHalfWidth, suggestion.depth + 0.35]
-        ], axis, shortAxis, longAxis, center[shortAxis], center[longAxis], coordinate, suggestion.diameter + clearance * 2));
+          [pocketHalfWidth, shoulderStart],
+          [pocketHalfWidth, suggestion.depth + 0.35],
+          [-pocketHalfWidth, suggestion.depth + 0.35],
+          [-pocketHalfWidth, shoulderStart],
+          [-channelHalfWidth, shoulderStart]
+        ], axis, shortAxis, longAxis, center[shortAxis], center[longAxis], coordinate, suggestion.diameter + clearance * 2);
+        socketGeometries.push(socketGeometry);
       } else {
-        pegGeometries.push(makeConnectorGeometry(
+        const pegGeometry = makeConnectorGeometry(
           center.clone(), axis, shape,
           suggestion.diameter,
           coordinate - suggestion.embed, coordinate + suggestion.depth
-        ));
-        socketGeometries.push(makeConnectorGeometry(
+        );
+        const socketGeometry = makeConnectorGeometry(
           center.clone(), axis, shape,
           suggestion.diameter + clearance * 2,
           coordinate - 0.05, coordinate + suggestion.depth + 0.35
-        ));
+        );
+        pegGeometries.push(pegGeometry);
+        socketGeometries.push(socketGeometry);
+        pegs.push(triangleSoup(pegGeometry));
       }
     }
-    pegs = pegGeometries.map(triangleSoup);
-    sockets = socketGeometries.map(triangleSoup);
+    const sockets = socketGeometries.map(triangleSoup);
     return await addInterlocksInWorker(
       Float32Array.from(parts.negative),
       Float32Array.from(parts.positive),
