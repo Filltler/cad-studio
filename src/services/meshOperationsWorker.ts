@@ -2,11 +2,13 @@ type Bounds = { min: [number, number, number]; max: [number, number, number] };
 type WorkerRequest =
   | { id: number; kind: "hollow"; vertices: Float32Array; bounds: Bounds; thickness: number; openTop: boolean }
   | { id: number; kind: "subtract"; source: Float32Array; cutter: Float32Array }
-  | { id: number; kind: "split"; source: Float32Array; negativeCutter: Float32Array; positiveCutter: Float32Array };
+  | { id: number; kind: "split"; source: Float32Array; negativeCutter: Float32Array; positiveCutter: Float32Array }
+  | { id: number; kind: "interlock"; negative: Float32Array; positive: Float32Array; pegs: Float32Array[]; sockets: Float32Array[] };
 type WorkerTask =
   | { kind: "hollow"; vertices: Float32Array; bounds: Bounds; thickness: number; openTop: boolean }
   | { kind: "subtract"; source: Float32Array; cutter: Float32Array }
-  | { kind: "split"; source: Float32Array; negativeCutter: Float32Array; positiveCutter: Float32Array };
+  | { kind: "split"; source: Float32Array; negativeCutter: Float32Array; positiveCutter: Float32Array }
+  | { kind: "interlock"; negative: Float32Array; positive: Float32Array; pegs: Float32Array[]; sockets: Float32Array[] };
 type WorkerResponse = { id: number; vertices?: Float32Array; negative?: Float32Array; positive?: Float32Array; error?: string };
 
 let nextRequestId = 1;
@@ -48,6 +50,10 @@ function runWorker(request: WorkerTask, signal?: AbortSignal): Promise<WorkerRes
     if ("cutter" in task) transfer.push(task.cutter.buffer as ArrayBuffer);
     if ("negativeCutter" in task) transfer.push(task.negativeCutter.buffer as ArrayBuffer);
     if ("positiveCutter" in task) transfer.push(task.positiveCutter.buffer as ArrayBuffer);
+    if ("negative" in task) transfer.push(task.negative.buffer as ArrayBuffer);
+    if ("positive" in task) transfer.push(task.positive.buffer as ArrayBuffer);
+    if ("pegs" in task) transfer.push(...task.pegs.map((peg) => peg.buffer as ArrayBuffer));
+    if ("sockets" in task) transfer.push(...task.sockets.map((socket) => socket.buffer as ArrayBuffer));
     worker.postMessage(task, transfer);
   });
 }
@@ -80,3 +86,13 @@ export async function splitMeshInWorker(
 }
 
 
+export async function addInterlocksInWorker(
+  negative: Float32Array,
+  positive: Float32Array,
+  pegs: Float32Array[],
+  sockets: Float32Array[]
+): Promise<{ negative: number[]; positive: number[] }> {
+  const response = await runWorker({ kind: "interlock", negative, positive, pegs, sockets });
+  if (!response.negative || !response.positive) throw new Error("El motor no devolvió las dos mitades con encastres.");
+  return { negative: Array.from(response.negative), positive: Array.from(response.positive) };
+}
