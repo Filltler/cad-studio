@@ -160,11 +160,7 @@ export async function calculateBoolean(objects: ProjectObject[], operation: Bool
 }
 
 
-/**
- * Creates a true hollow primitive by subtracting an inner cutter.
- * Boxes become open-top containers; cylinders become tubes with a through-bore; spheres become closed hollow shells.
- * Dimensions and positions are expressed in millimeters.
- */
+/** Per-face wall thicknesses for the open-top box hollowing operation. */
 export type HollowWallThickness = {
   left: number;
   right: number;
@@ -173,10 +169,7 @@ export type HollowWallThickness = {
   bottom: number;
 };
 
-/**
- * Creates an open-top box with independently configurable wall thicknesses,
- * or a cylindrical tube using the left value as radial wall thickness.
- */
+/** Builds a uniformly thick inner cavity for a validated closed custom mesh. */
 async function calculateCustomHollow(object: ProjectObject, wallThickness: number): Promise<number[]> {
   if (!Number.isFinite(wallThickness) || wallThickness <= 0) {
     throw new Error("El espesor debe ser mayor que 0 mm.");
@@ -375,8 +368,6 @@ export async function calculateHollow(
   };
   return calculateBoolean([object, cutter], "subtract");
 }
-
-
 
 /**
  * Cut a mesh with a horizontal plane at an absolute world-space Y height.
