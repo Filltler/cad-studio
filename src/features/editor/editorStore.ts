@@ -23,7 +23,7 @@ type EditorState = {
   spaceObjects: (objectIds: string[], axis: AlignmentAxis, mode: SpacingMode, gap: number) => void;
   applyBooleanResult: (objectIds: string[], name: string, vertices: number[]) => void; 
   addCustomObject: (name: string, vertices: number[], position?: Vector3) => void;
-  applyHeightSplitResult: (objectId: string, name: string, lowerVertices: number[], upperVertices: number[]) => void;
+  applyPlanarSplitResult: (objectId: string, name: string, negativeVertices: number[], positiveVertices: number[], negativeLabel: string, positiveLabel: string) => void;
   loadProjectObjects: (objects: ProjectObject[]) => void;
 };
 
@@ -35,7 +35,19 @@ const defaultDimensions: Record<Exclude<PrimitiveKind, "custom">, Vector3> = {
 
 const roundMillimeters = (value: number) => Math.round((value + Number.EPSILON) * 1000) / 1000;
 
-const cloneObjects = (objects: ProjectObject[]) => objects.map((object) => ({ ...object, position: { ...object.position }, dimensions: { ...object.dimensions }, rotation: { ...object.rotation }, geometryVertices: object.geometryVertices ? [...object.geometryVertices] : undefined }));
+const cloneObjects = (objects: ProjectObject[]) => objects.map((object) => ({ ...object, position: { ...object.position }, dimensions: { ...object.dimensions }, rotation: { ...object.rotation }, geometryVertices: object.geometryVertices }));
+function boundsFromVertices(vertices: number[]) {
+  if (vertices.length < 9 || vertices.length % 3 !== 0) return null;
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  for (let index = 0; index < vertices.length; index += 3) {
+    const x = vertices[index], y = vertices[index + 1], z = vertices[index + 2];
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null;
+    minX = Math.min(minX, x); minY = Math.min(minY, y); minZ = Math.min(minZ, z);
+    maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); maxZ = Math.max(maxZ, z);
+  }
+  return { minX, minY, minZ, maxX, maxY, maxZ };
+}
 let transactionStart: ProjectObject[] | null = null;
 
 export const useEditorStore = create<EditorState>((set, get) => ({
@@ -230,27 +242,28 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const history = transactionStart ? { past: state.past, future: state.future } : { past: [...state.past, cloneObjects(state.objects)].slice(-100), future: [] };
     return { ...history, objects: next, selectedId: remove.has(state.selectedId ?? "") ? (next[next.length - 1]?.id ?? null) : state.selectedId };
   }),
-  applyHeightSplitResult: (objectId, name, lowerVertices, upperVertices) => set((state) => {
+  applyPlanarSplitResult: (objectId, name, negativeVertices, positiveVertices, negativeLabel, positiveLabel) => set((state) => {
     const source = state.objects.find((object) => object.id === objectId);
-    if (!source || lowerVertices.length < 9 || upperVertices.length < 9) return state;
-    const makePart = (partName: string, vertices: number[]): ProjectObject => {
-      const xs = vertices.filter((_, index) => index % 3 === 0);
-      const ys = vertices.filter((_, index) => index % 3 === 1);
-      const zs = vertices.filter((_, index) => index % 3 === 2);
-      const minX = Math.min(...xs), maxX = Math.max(...xs);
-      const minY = Math.min(...ys), maxY = Math.max(...ys);
-      const minZ = Math.min(...zs), maxZ = Math.max(...zs);
+    if (!source) return state;
+    const makePart = (partName: string, vertices: number[]): ProjectObject | null => {
+      const bounds = boundsFromVertices(vertices);
+      if (!bounds) return null;
       return {
         id: crypto.randomUUID(), name: partName, kind: "custom", booleanRole: "solid", color: source.color ?? "#8b9cf6",
         position: { x: 0, y: 0, z: 0 },
-        dimensions: { x: roundMillimeters(maxX - minX), y: roundMillimeters(maxY - minY), z: roundMillimeters(maxZ - minZ) },
+        dimensions: {
+          x: roundMillimeters(bounds.maxX - bounds.minX),
+          y: roundMillimeters(bounds.maxY - bounds.minY),
+          z: roundMillimeters(bounds.maxZ - bounds.minZ)
+        },
         rotation: { x: 0, y: 0, z: 0 }, geometryVertices: vertices
       };
     };
-    const lower = makePart(name + " · inferior", lowerVertices);
-    const upper = makePart(name + " · superior", upperVertices);
+    const negative = makePart(name + " · " + negativeLabel, negativeVertices);
+    const positive = makePart(name + " · " + positiveLabel, positiveVertices);
+    if (!negative || !positive) return state;
     const history = transactionStart ? { past: state.past, future: state.future } : { past: [...state.past, cloneObjects(state.objects)].slice(-100), future: [] };
-    return { ...history, objects: [...state.objects.filter((object) => object.id !== objectId), lower, upper], selectedId: lower.id };
+    return { ...history, objects: [...state.objects.filter((object) => object.id !== objectId), negative, positive], selectedId: negative.id };
   }),
   loadProjectObjects: (objects) => {
     transactionStart = null;
@@ -264,19 +277,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   applyBooleanResult: (objectIds, name, vertices) => set((state) => {
     const history = transactionStart ? { past: state.past, future: state.future } : { past: [...state.past, cloneObjects(state.objects)].slice(-100), future: [] };
     const selected = state.objects.filter((object) => objectIds.includes(object.id));
-    if (selected.length < 1 || vertices.length < 9) return state;
-    const xs = vertices.filter((_, index) => index % 3 === 0);
-    const ys = vertices.filter((_, index) => index % 3 === 1);
-    const zs = vertices.filter((_, index) => index % 3 === 2);
-    const minX = Math.min(...xs), maxX = Math.max(...xs);
-    const minY = Math.min(...ys), maxY = Math.max(...ys);
-    const minZ = Math.min(...zs), maxZ = Math.max(...zs);
+    const bounds = boundsFromVertices(vertices);
+    if (selected.length < 1 || !bounds) return state;
     const result: ProjectObject = {
       id: crypto.randomUUID(), name, kind: "custom", booleanRole: "solid", color: selected[0]?.color ?? "#8b9cf6",
       position: { x: 0, y: 0, z: 0 },
-      dimensions: { x: roundMillimeters(maxX - minX), y: roundMillimeters(maxY - minY), z: roundMillimeters(maxZ - minZ) },
+      dimensions: { x: roundMillimeters(bounds.maxX - bounds.minX), y: roundMillimeters(bounds.maxY - bounds.minY), z: roundMillimeters(bounds.maxZ - bounds.minZ) },
       rotation: { x: 0, y: 0, z: 0 }, geometryVertices: vertices
     };
     return { ...history, objects: [...state.objects.filter((object) => !objectIds.includes(object.id)), result], selectedId: result.id };
   })
 }));
+

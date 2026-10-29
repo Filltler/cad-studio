@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
 import { Viewport } from "../features/viewport/Viewport";
 import { useEditorStore } from "../features/editor/editorStore";
 import { listProjects, loadProject, saveProject } from "../services/storage/projectStorage";
-import { calculateBoolean, calculateHeightCut, calculateHeightSplit, calculateHollow, calculateObjectBounds, type BooleanOperation } from "../services/booleanOperations";
+import { calculateBoolean, calculatePlanarCut, calculatePlanarSplit, calculateHollow, calculateObjectBounds, type BooleanOperation, type CutAxis } from "../services/booleanOperations";
 import { parseSTL } from "../services/stlImport";
 
 export function App() {
@@ -17,9 +17,11 @@ export function App() {
   const [wallThicknesses, setWallThicknesses] = useState({ left: "2", right: "2", front: "2", back: "2", bottom: "2" });
   const [numericDraft, setNumericDraft] = useState<Record<string, string>>({});
   const [cutEnabled, setCutEnabled] = useState(false);
-  const [cutHeight, setCutHeight] = useState("17");
+  const [cutAxis, setCutAxis] = useState<CutAxis>("y");
+  const [cutPosition, setCutPosition] = useState("17");
   const [cutPreview, setCutPreview] = useState<{ objectId: string; vertices: number[] } | null>(null);
   const [cutBusy, setCutBusy] = useState(false);
+  const [hollowBusy, setHollowBusy] = useState(false);
   const [projectId, setProjectId] = useState("local-project");
   const [projectName, setProjectName] = useState("Mi primer proyecto");
   const [projects, setProjects] = useState<Array<{ id: string; name: string; updatedAt: string }>>([]);
@@ -35,7 +37,7 @@ export function App() {
   const spaceObjects = useEditorStore((s) => s.spaceObjects);
   const addCustomObject = useEditorStore((s) => s.addCustomObject);
   const applyBooleanResult = useEditorStore((s) => s.applyBooleanResult); 
-  const applyHeightSplitResult = useEditorStore((s) => s.applyHeightSplitResult);
+  const applyPlanarSplitResult = useEditorStore((s) => s.applyPlanarSplitResult);
   const loadProjectObjects = useEditorStore((s) => s.loadProjectObjects);
   const undo = useEditorStore((s) => s.undo);
   const redo = useEditorStore((s) => s.redo);
@@ -43,24 +45,60 @@ export function App() {
   const canRedo = useEditorStore((s) => s.future.length > 0);
   const selected = objects.find((o) => o.id === selectedId);
   const roundForDisplay = (value: number) => Math.round((value + Number.EPSILON) * 1000) / 1000;
+  const cutBounds = useMemo(() => {
+    if (!selected) return null;
+    try { return calculateObjectBounds(selected); }
+    catch { return null; }
+  }, [selected]);
+  const cutExtent = cutBounds ? cutBounds.max[cutAxis] - cutBounds.min[cutAxis] : 0;
+  const cutEpsilon = Math.max(cutExtent * 1e-6, 1e-5);
+  const cutMinimum = cutBounds ? cutBounds.min[cutAxis] + cutEpsilon * 2 : 0;
+  const cutMaximum = cutBounds ? cutBounds.max[cutAxis] - cutEpsilon * 2 : 0;
+  const parsedCutPosition = Number(cutPosition);
+  const cutPositionValid = Boolean(cutBounds && cutMaximum > cutMinimum && cutPosition.trim() && Number.isFinite(parsedCutPosition) && parsedCutPosition >= cutMinimum && parsedCutPosition <= cutMaximum);
+  const cutAxisLabels: Record<CutAxis, string> = { x: "X · Lateral", y: "Y · Altura", z: "Z · Profundidad" };
+  const boundedCutPosition = (value: number) => {
+    if (!Number.isFinite(value) || !cutBounds || cutMaximum <= cutMinimum) return;
+    setCutPosition(String(roundForDisplay(Math.min(cutMaximum, Math.max(cutMinimum, value)))));
+  };
+  const cutPlaneSpec = useMemo(() => {
+    if (!cutEnabled || !selected || !cutBounds) return null;
+    return {
+      objectId: selected.id,
+      axis: cutAxis,
+      position: cutPositionValid ? parsedCutPosition : (cutBounds.min[cutAxis] + cutBounds.max[cutAxis]) / 2,
+      bounds: {
+        min: [cutBounds.min.x, cutBounds.min.y, cutBounds.min.z] as [number, number, number],
+        max: [cutBounds.max.x, cutBounds.max.y, cutBounds.max.z] as [number, number, number]
+      }
+    };
+  }, [cutEnabled, selected, cutBounds, cutAxis, cutPositionValid, parsedCutPosition]);
+
   const getBedBaseY = (object: typeof objects[number]) => {
     if (object.kind !== "custom") return object.position.y - object.dimensions.y / 2;
     const vertices = object.geometryVertices ?? [];
     if (vertices.length < 3) return object.position.y;
-    const points: THREE.Vector3[] = [];
-    for (let i = 0; i + 2 < vertices.length; i += 3) points.push(new THREE.Vector3(vertices[i], vertices[i + 1], vertices[i + 2]));
-    const center = new THREE.Box3().setFromPoints(points).getCenter(new THREE.Vector3());
+    let minX = Infinity, minY = Infinity, minZ = Infinity;
+    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+    for (let index = 0; index + 2 < vertices.length; index += 3) {
+      const x = vertices[index], y = vertices[index + 1], z = vertices[index + 2];
+      minX = Math.min(minX, x); minY = Math.min(minY, y); minZ = Math.min(minZ, z);
+      maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); maxZ = Math.max(maxZ, z);
+    }
+    const center = new THREE.Vector3((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
     const rotation = new THREE.Euler(
       THREE.MathUtils.degToRad(object.rotation.x),
       THREE.MathUtils.degToRad(object.rotation.y),
       THREE.MathUtils.degToRad(object.rotation.z)
     );
-    let minY = Infinity;
-    for (const point of points) {
-      point.sub(center).applyEuler(rotation).add(center);
-      minY = Math.min(minY, point.y);
+    const rotationMatrix = new THREE.Matrix4().makeRotationFromEuler(rotation);
+    const point = new THREE.Vector3();
+    let minimumRotatedY = Infinity;
+    for (let index = 0; index + 2 < vertices.length; index += 3) {
+      point.set(vertices[index] - center.x, vertices[index + 1] - center.y, vertices[index + 2] - center.z).applyMatrix4(rotationMatrix);
+      minimumRotatedY = Math.min(minimumRotatedY, point.y + center.y);
     }
-    return minY + object.position.y;
+    return minimumRotatedY + object.position.y;
   };
   useEffect(() => {
     if (!selected) { setNumericDraft({}); return; }
@@ -72,28 +110,39 @@ export function App() {
   }, [selectedId, selected]);
 
   useEffect(() => {
-    if (!cutEnabled || !selected || !cutHeight.trim() || !Number.isFinite(Number(cutHeight))) {
+    if (!selected || !cutBounds || cutMaximum <= cutMinimum) {
+      setCutPosition("");
+      return;
+    }
+    setCutPosition(String(roundForDisplay((cutBounds.min[cutAxis] + cutBounds.max[cutAxis]) / 2)));
+  }, [selectedId, cutAxis, cutBounds]);
+
+  useEffect(() => {
+    if (!cutEnabled || !selected || !cutPositionValid) {
       setCutPreview(null);
       setCutBusy(false);
       return;
     }
     let active = true;
+    const controller = new AbortController();
+    setCutPreview(null);
+    setCutBusy(false);
     const timer = window.setTimeout(() => {
       setCutBusy(true);
-      calculateHeightCut(selected, Number(cutHeight))
+      calculatePlanarCut(selected, cutAxis, parsedCutPosition, controller.signal)
         .then((vertices) => {
           if (active) setCutPreview({ objectId: selected.id, vertices });
         })
         .catch((error) => {
-          if (active) {
+          if (active && !(error instanceof Error && error.name === "AbortError")) {
             setCutPreview(null);
             setNotice(error instanceof Error ? error.message : "No se pudo calcular la vista previa del corte.");
           }
         })
         .finally(() => { if (active) setCutBusy(false); });
-    }, 250);
-    return () => { active = false; window.clearTimeout(timer); };
-  }, [cutEnabled, selectedId, cutHeight, objects]);
+    }, 300);
+    return () => { active = false; controller.abort(); window.clearTimeout(timer); };
+  }, [cutEnabled, selectedId, cutAxis, cutPosition, cutPositionValid, objects]);
 
   const refreshProjects = useCallback(async () => {
     const saved = await listProjects();
@@ -246,20 +295,23 @@ export function App() {
     setNotice("Vista previa de corte cancelada; la pieza original no se modificó.");
   }
 
-  async function confirmHeightCut() {
-    if (!selected || !cutPreview || cutPreview.objectId !== selected.id || cutBusy) {
+  async function confirmPlanarCut() {
+    if (!selected || !cutPreview || cutPreview.objectId !== selected.id || cutBusy || !cutPositionValid) {
       setNotice("Esperá a que la vista previa del corte esté lista.");
       return;
     }
     setCutBusy(true);
+    const axisLabel = cutAxis.toUpperCase();
     setNotice("Calculando las dos partes del corte…");
     try {
-      const parts = await calculateHeightSplit(selected, Number(cutHeight));
-      applyHeightSplitResult(selected.id, "Corte por altura · " + selected.name, parts.lower, parts.upper);
+      const parts = await calculatePlanarSplit(selected, cutAxis, parsedCutPosition);
+      const negativeLabel = cutAxis === "y" ? "inferior" : "lado −" + axisLabel;
+      const positiveLabel = cutAxis === "y" ? "superior" : "lado +" + axisLabel;
+      applyPlanarSplitResult(selected.id, "Corte " + axisLabel + " · " + selected.name, parts.negative, parts.positive, negativeLabel, positiveLabel);
       setBooleanSelection((current) => current.filter((id) => id !== selected.id));
       setCutEnabled(false);
       setCutPreview(null);
-      setNotice("Corte confirmado a Y = " + Number(cutHeight).toFixed(3) + " mm. Se crearon dos objetos independientes; podés deshacerlo.");
+      setNotice("Corte confirmado en " + axisLabel + " = " + parsedCutPosition.toFixed(3) + " mm. Se crearon dos objetos independientes; podés deshacerlo.");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "No se pudieron generar las dos partes del corte.");
     } finally {
@@ -272,8 +324,10 @@ export function App() {
       setNotice("Seleccioná una pieza para vaciarla.");
       return;
     }
+    if (hollowBusy) return;
+    setHollowBusy(true);
     try {
-      setNotice("Generando cavidad y comprobando la malla…");
+      setNotice("Calculando el vaciado en segundo plano y comprobando la malla…");
       const parsedWalls = {
         left: Number(wallThicknesses.left),
         right: Number(wallThicknesses.right),
@@ -298,6 +352,8 @@ export function App() {
             : "Vaciado completado con espesores independientes.");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "No se pudo vaciar la pieza.");
+    } finally {
+      setHollowBusy(false);
     }
   }
 
@@ -616,7 +672,14 @@ export function App() {
               <span className="subtle-chip">Cuadrícula activa</span>
             </div>
           </div>
-          <Viewport multiSelectMode={viewportMultiSelect} onObjectSelect={handleViewportObjectSelect} onObjectsMarqueeSelect={handleViewportMarqueeSelect} preview={cutPreview} />
+          <Viewport
+            multiSelectMode={viewportMultiSelect}
+            onObjectSelect={handleViewportObjectSelect}
+            onObjectsMarqueeSelect={handleViewportMarqueeSelect}
+            preview={cutPreview}
+            cutPlane={cutPlaneSpec}
+            onCutPositionChange={boundedCutPosition}
+          />
           <div className="viewport-bottom">
             <span>Arrastrá para orbitar · Shift+arrastrá para seleccionar · Esc para cancelar · Rueda para zoom</span>
             <span>Unidades: milímetros</span>
@@ -681,19 +744,56 @@ export function App() {
                 <button className="secondary-button" onClick={cancelNumericChanges}>Cancelar cambios</button>
               </div>
               <div className="property-section height-cut-section">
-                <div className="property-title">Corte por altura <span>Y · mm</span></div>
-                <small>Divide la pieza con un plano horizontal en una coordenada Y absoluta. Al confirmar, conserva las dos mitades como objetos independientes.</small>
+                <div className="property-title">Corte por plano <span>{cutAxis.toUpperCase()} · mm</span></div>
+                <small>Elegí un eje y arrastrá el plano sobre la pieza o ajustá su posición con el número y el deslizador. Los límites se calculan a partir del tamaño real del objeto.</small>
                 {!cutEnabled ? (
                   <button className="secondary-button" onClick={() => setCutEnabled(true)}>Activar vista previa</button>
                 ) : (
                   <>
+                    <div className="cut-axis-options" role="group" aria-label="Eje del corte">
+                      {(["x", "y", "z"] as CutAxis[]).map((axis) => (
+                        <button
+                          key={axis}
+                          type="button"
+                          className={cutAxis === axis ? "active" : ""}
+                          aria-pressed={cutAxis === axis}
+                          onClick={() => setCutAxis(axis)}
+                        >
+                          {axis.toUpperCase()}
+                        </button>
+                      ))}
+                    </div>
+                    <small className="cut-axis-label">{cutAxisLabels[cutAxis]}</small>
                     <label className="property-row">
-                      <span>Altura exacta</span>
-                      <input aria-label="Altura absoluta del corte en Y" type="number" min="0" step="0.01" value={cutHeight} onChange={(event) => setCutHeight(event.target.value)} />
+                      <span>Posición</span>
+                      <input
+                        aria-label={"Posición del corte en " + cutAxis.toUpperCase()}
+                        type="number"
+                        min={cutMinimum}
+                        max={cutMaximum}
+                        step="0.01"
+                        value={cutPosition}
+                        disabled={!cutBounds || cutMaximum <= cutMinimum}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          if (value === "") setCutPosition("");
+                          else boundedCutPosition(Number(value));
+                        }}
+                      />
                     </label>
-                    <input aria-label="Deslizador de altura del corte" type="range" min="0" max="100" step="0.05" value={cutHeight === "" || !Number.isFinite(Number(cutHeight)) ? 0 : Math.min(100, Math.max(0, Number(cutHeight)))} onChange={(event) => setCutHeight(event.target.value)} />
-                    <small>{cutBusy ? "Calculando vista previa…" : cutPreview ? "Vista previa de la parte inferior lista. Al confirmar se crearán las dos partes independientes." : "Mové el deslizador para actualizar la vista previa."}</small>
-                    <button className="primary-button" disabled={!cutPreview || cutBusy} onClick={confirmHeightCut}>Confirmar corte</button>
+                    <input
+                      aria-label={"Deslizador del corte en " + cutAxis.toUpperCase()}
+                      type="range"
+                      min={cutMinimum}
+                      max={cutMaximum}
+                      step={Math.max(cutExtent / 1000, 0.001)}
+                      value={cutPositionValid ? parsedCutPosition : (cutMinimum + cutMaximum) / 2}
+                      disabled={!cutBounds || cutMaximum <= cutMinimum}
+                      onChange={(event) => boundedCutPosition(Number(event.target.value))}
+                    />
+                    <small>Límites: {roundForDisplay(cutBounds?.min[cutAxis] ?? 0)} a {roundForDisplay(cutBounds?.max[cutAxis] ?? 0)} mm. El plano solo puede quedar dentro de la pieza.</small>
+                    <small>{cutBusy ? "Calculando vista previa…" : cutPreview ? "Arrastrá el control sobre el plano para ajustar el corte. Al confirmar se crearán ambas partes." : "Mové el plano o el deslizador para actualizar la vista previa."}</small>
+                    <button className="primary-button" disabled={!cutPreview || cutBusy || !cutPositionValid} onClick={confirmPlanarCut}>Confirmar corte</button>
                     <button className="secondary-button" onClick={cancelHeightCut}>Cancelar corte</button>
                   </>
                 )}
@@ -736,11 +836,11 @@ export function App() {
                         onChange={(event) => setWallThicknesses((current) => ({ ...current, left: event.target.value }))}
                       />
                     </label>
-                    <small>{selected.kind === "cylinder" ? "El cilindro se convierte en un tubo con agujero pasante." : selected.kind === "custom" ? "La cavidad se abre por la cara superior plana cuando existe; el motor valida que el resultado sea un sólido correcto." : "La esfera queda hueca por dentro, con la superficie exterior cerrada."}</small>
+                    <small>{selected.kind === "cylinder" ? "El cilindro se convierte en un tubo con agujero pasante." : selected.kind === "custom" ? "Si la malla tiene una cara superior plana, la cavidad se abre allí. En los demás casos queda cerrada y podés verla con un corte." : "La esfera queda hueca por dentro, con la superficie exterior cerrada."}</small>
                   </>
                 )}
-                <button className="primary-button" onClick={handleHollow}>
-                  Vaciar pieza
+                <button className="primary-button" disabled={hollowBusy} onClick={handleHollow}>
+                  {hollowBusy ? "Vaciando pieza…" : "Vaciar pieza"}
                 </button>
               </div>
               {advanced && (
@@ -763,3 +863,4 @@ export function App() {
     </main>
   );
 }
+
