@@ -233,6 +233,7 @@ async function calculateCustomHollow(object: ProjectObject, wallThickness: numbe
   let rotatedInner: any = null;
   let openingSection: any = null;
   let openingColumn: any = null;
+  let rotatedOpeningColumn: any = null;
   let openingCutter: any = null;
   let hollow: any = null;
   let outputMesh: any = null;
@@ -289,7 +290,8 @@ async function calculateCustomHollow(object: ProjectObject, wallThickness: numbe
         throw new Error("No se pudo detectar una abertura válida en la cara superior.");
       }
       openingColumn = openingSection.extrude(openingTop - openingBottom);
-      openingCutter = openingColumn.rotate([-90, 0, 0]).translate([0, openingBottom, 0]);
+      rotatedOpeningColumn = openingColumn.rotate([-90, 0, 0]);
+      openingCutter = rotatedOpeningColumn.translate([0, openingBottom, 0]);
       try {
         hollow = shell.subtract(openingCutter);
       } catch {
@@ -326,7 +328,7 @@ async function calculateCustomHollow(object: ProjectObject, wallThickness: numbe
   } finally {
     outputMesh?.delete?.();
     openingSection?.delete?.();
-    for (const manifold of new Set([hollow, shell, openingCutter, openingColumn, rotatedInner, inner, offsetSphere, outer, sourceMesh])) {
+    for (const manifold of new Set([hollow, shell, openingCutter, rotatedOpeningColumn, openingColumn, rotatedInner, inner, offsetSphere, outer, sourceMesh])) {
       manifold?.delete?.();
     }
     geometry.dispose();
