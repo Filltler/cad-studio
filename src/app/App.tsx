@@ -195,6 +195,12 @@ export function App() {
     }
   }, [selectObject]);
 
+  const handleViewportMarqueeSelect = useCallback((ids: string[], additive: boolean) => {
+    if (!ids.length) return;
+    selectObject(ids[0]);
+    setBooleanSelection((current) => additive ? Array.from(new Set([...current, ...ids])) : ids);
+  }, [selectObject]);
+
   async function handleBoolean(operation: BooleanOperation) {
     const selectedObjects = objects.filter((object) => booleanSelection.includes(object.id));
     const chosen = operation === "subtract"
@@ -465,7 +471,7 @@ export function App() {
 
           <div className="section-heading object-heading">Objetos del proyecto <span>{objects.length}</span></div>
           <div className="boolean-tools">
-            <small>{viewportMultiSelect ? "Tocá piezas en el área 3D para agregarlas o quitarlas de la selección." : "Marcá casillas o usá Shift+clic en 3D para sumar o quitar piezas."}</small>
+            <small>{viewportMultiSelect ? "Tocá piezas en el área 3D o usá Shift+arrastre en un espacio vacío para seleccionar por recuadro." : "Marcá casillas, usá Shift+clic o Shift+arrastrá en un espacio vacío para sumar piezas por recuadro."}</small>
             <button className={`secondary-button ${viewportMultiSelect ? "active" : ""}`} onClick={() => setViewportMultiSelect((active) => !active)} aria-pressed={viewportMultiSelect}>
               {viewportMultiSelect ? "Finalizar selección 3D" : "Seleccionar piezas en 3D"}
             </button>
@@ -564,9 +570,9 @@ export function App() {
               <span className="subtle-chip">Cuadrícula activa</span>
             </div>
           </div>
-          <Viewport multiSelectMode={viewportMultiSelect} onObjectSelect={handleViewportObjectSelect} preview={cutPreview} />
+          <Viewport multiSelectMode={viewportMultiSelect} onObjectSelect={handleViewportObjectSelect} onObjectsMarqueeSelect={handleViewportMarqueeSelect} preview={cutPreview} />
           <div className="viewport-bottom">
-            <span>Arrastrá para orbitar · Rueda para zoom</span>
+            <span>Arrastrá para orbitar · Shift+arrastrá para seleccionar por recuadro · Rueda para zoom</span>
             <span>Unidades: milímetros</span>
           </div>
         </section>

@@ -5,7 +5,7 @@ import { TransformControls } from "three/examples/jsm/controls/TransformControls
 import { useEditorStore } from "../editor/editorStore";
 
 type TransformMode = "translate" | "rotate" | "scale";
-type ViewportProps = { multiSelectMode?: boolean; onObjectSelect?: (id: string | null, additive: boolean) => void; preview?: { objectId: string; vertices: number[] } | null };
+type ViewportProps = { multiSelectMode?: boolean; onObjectSelect?: (id: string | null, additive: boolean) => void; onObjectsMarqueeSelect?: (ids: string[], additive: boolean) => void; preview?: { objectId: string; vertices: number[] } | null };
 
 const modeLabels: Record<TransformMode, string> = {
   translate: "Mover",
@@ -13,8 +13,9 @@ const modeLabels: Record<TransformMode, string> = {
   scale: "Escalar"
 };
 
-export function Viewport({ multiSelectMode = false, onObjectSelect, preview = null }: ViewportProps) {
+export function Viewport({ multiSelectMode = false, onObjectSelect, onObjectsMarqueeSelect, preview = null }: ViewportProps) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const selectionBoxRef = useRef<HTMLDivElement>(null);
   const objects = useEditorStore((s) => s.objects);
   const selectedId = useEditorStore((s) => s.selectedId);
   const selectObject = useEditorStore((s) => s.selectObject);
@@ -31,10 +32,15 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, preview = nu
   const selectedIdRef = useRef(selectedId);
   const multiSelectModeRef = useRef(multiSelectMode);
   const onObjectSelectRef = useRef(onObjectSelect);
+  const onObjectsMarqueeSelectRef = useRef(onObjectsMarqueeSelect);
+  const previewRef = useRef(preview);
+  const selectionDragRef = useRef<{ pointerId: number; startX: number; startY: number } | null>(null);
   objectsRef.current = objects;
   selectedIdRef.current = selectedId;
   multiSelectModeRef.current = multiSelectMode;
   onObjectSelectRef.current = onObjectSelect;
+  onObjectsMarqueeSelectRef.current = onObjectsMarqueeSelect;
+  previewRef.current = preview;
   const modeRef = useRef<TransformMode>("translate");
   const dimensionHandles = useRef<THREE.Mesh[]>([]);
   const dragState = useRef<{
@@ -160,9 +166,88 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, preview = nu
       pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
     };
+    const clampToCanvas = (clientX: number, clientY: number) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      return {
+        x: THREE.MathUtils.clamp(clientX, rect.left, rect.right),
+        y: THREE.MathUtils.clamp(clientY, rect.top, rect.bottom),
+        rect
+      };
+    };
+    const updateSelectionBox = (startX: number, startY: number, clientX: number, clientY: number) => {
+      const end = clampToCanvas(clientX, clientY);
+      const box = selectionBoxRef.current;
+      if (box) {
+        box.style.display = "block";
+        box.style.left = Math.min(startX, end.x) - end.rect.left + "px";
+        box.style.top = Math.min(startY, end.y) - end.rect.top + "px";
+        box.style.width = Math.abs(end.x - startX) + "px";
+        box.style.height = Math.abs(end.y - startY) + "px";
+      }
+      return end;
+    };
+    const getObjectsFullyInsideSelection = (startX: number, startY: number, endX: number, endY: number) => {
+      const canvasRect = renderer.domElement.getBoundingClientRect();
+      const selection = {
+        left: Math.min(startX, endX),
+        right: Math.max(startX, endX),
+        top: Math.min(startY, endY),
+        bottom: Math.max(startY, endY)
+      };
+      const selectionCenterX = (selection.left + selection.right) / 2;
+      const selectionCenterY = (selection.top + selection.bottom) / 2;
+      const contained: { id: string; distance: number; screenX: number; screenY: number }[] = [];
+      for (const mesh of meshMap.current.values()) {
+        if (!mesh.visible) continue;
+        mesh.updateWorldMatrix(true, false);
+        const bounds = new THREE.Box3().setFromObject(mesh);
+        if (bounds.isEmpty()) continue;
+        let fullyInside = true;
+        for (const x of [bounds.min.x, bounds.max.x]) {
+          for (const y of [bounds.min.y, bounds.max.y]) {
+            for (const z of [bounds.min.z, bounds.max.z]) {
+              const projected = new THREE.Vector3(x, y, z).project(camera);
+              const screenX = canvasRect.left + (projected.x + 1) * 0.5 * canvasRect.width;
+              const screenY = canvasRect.top + (1 - projected.y) * 0.5 * canvasRect.height;
+              if (projected.z < -1 || projected.z > 1 || screenX < selection.left - 0.5 || screenX > selection.right + 0.5 || screenY < selection.top - 0.5 || screenY > selection.bottom + 0.5) {
+                fullyInside = false;
+                break;
+              }
+            }
+            if (!fullyInside) break;
+          }
+          if (!fullyInside) break;
+        }
+        const id = mesh.userData.objectId as string | undefined;
+        if (!fullyInside || !id) continue;
+        const center = bounds.getCenter(new THREE.Vector3()).project(camera);
+        const screenX = canvasRect.left + (center.x + 1) * 0.5 * canvasRect.width;
+        const screenY = canvasRect.top + (1 - center.y) * 0.5 * canvasRect.height;
+        contained.push({ id, distance: (screenX - selectionCenterX) ** 2 + (screenY - selectionCenterY) ** 2, screenX, screenY });
+      }
+      return contained
+        .sort((a, b) => a.distance - b.distance || a.screenX - b.screenX || a.screenY - b.screenY || a.id.localeCompare(b.id))
+        .map((item) => item.id);
+    };
     const onPointerDown = (event: PointerEvent) => {
       if (transform.dragging) return;
       getPointer(event);
+      if (event.button === 0 && event.shiftKey && !previewRef.current) {
+        const objectHit = raycaster.intersectObjects([...meshMap.current.values()], false)[0];
+        const dimensionHandleHit = raycaster.intersectObjects(dimensionHandles.current, false)[0];
+        const transformHandleHit = raycaster.intersectObject(transform.getHelper(), true)[0];
+        if (!objectHit && !dimensionHandleHit && !transformHandleHit) {
+          const start = clampToCanvas(event.clientX, event.clientY);
+          selectionDragRef.current = { pointerId: event.pointerId, startX: start.x, startY: start.y };
+          controls.enabled = false;
+          host.classList.add("marquee-selecting");
+          updateSelectionBox(start.x, start.y, start.x, start.y);
+          try { renderer.domElement.setPointerCapture(event.pointerId); } catch { /* Ignore unsupported pointer capture. */ }
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          return;
+        }
+      }
       if (modeRef.current === "scale") {
         const handleHit = raycaster.intersectObjects(dimensionHandles.current, false)[0];
         const handle = handleHit?.object as THREE.Mesh | undefined;
@@ -207,6 +292,12 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, preview = nu
       else selectObject(hitId);
     };
     const onPointerMove = (event: PointerEvent) => {
+      const marquee = selectionDragRef.current;
+      if (marquee && marquee.pointerId === event.pointerId) {
+        updateSelectionBox(marquee.startX, marquee.startY, event.clientX, event.clientY);
+        event.preventDefault();
+        return;
+      }
       const drag = dragState.current;
       if (!drag) return;
       getPointer(event);
@@ -225,17 +316,36 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, preview = nu
       const position = { x: positionVector.x, y: positionVector.y, z: positionVector.z };
       updateObject(drag.objectId, { dimensions, position });
     };
-    const onPointerUp = () => {
+    const onPointerUp = (event: PointerEvent) => {
+      const marquee = selectionDragRef.current;
+      if (marquee && marquee.pointerId === event.pointerId) {
+        const end = updateSelectionBox(marquee.startX, marquee.startY, event.clientX, event.clientY);
+        const moved = Math.hypot(end.x - marquee.startX, end.y - marquee.startY) >= 5;
+        selectionDragRef.current = null;
+        host.classList.remove("marquee-selecting");
+        if (selectionBoxRef.current) selectionBoxRef.current.style.display = "none";
+        controls.enabled = true;
+        if (event.type === "pointerup" && moved) {
+          const ids = getObjectsFullyInsideSelection(marquee.startX, marquee.startY, end.x, end.y);
+          if (ids.length) onObjectsMarqueeSelectRef.current?.(ids, true);
+        }
+        try {
+          if (renderer.domElement.hasPointerCapture(event.pointerId)) renderer.domElement.releasePointerCapture(event.pointerId);
+        } catch { /* Ignore unsupported pointer capture. */ }
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
       if (dragState.current) {
         dragState.current = null;
         controls.enabled = true;
         endTransaction();
       }
     };
-    renderer.domElement.addEventListener("pointerdown", onPointerDown);
+    renderer.domElement.addEventListener("pointerdown", onPointerDown, true);
     renderer.domElement.addEventListener("pointermove", onPointerMove);
-    renderer.domElement.addEventListener("pointerup", onPointerUp);
-    renderer.domElement.addEventListener("pointercancel", onPointerUp);
+    renderer.domElement.addEventListener("pointerup", onPointerUp, true);
+    renderer.domElement.addEventListener("pointercancel", onPointerUp, true);
 
     let frame = 0;
     const animate = () => {
@@ -248,10 +358,13 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, preview = nu
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
-      renderer.domElement.removeEventListener("pointerdown", onPointerDown);
+      renderer.domElement.removeEventListener("pointerdown", onPointerDown, true);
       renderer.domElement.removeEventListener("pointermove", onPointerMove);
-      renderer.domElement.removeEventListener("pointerup", onPointerUp);
-      renderer.domElement.removeEventListener("pointercancel", onPointerUp);
+      renderer.domElement.removeEventListener("pointerup", onPointerUp, true);
+      renderer.domElement.removeEventListener("pointercancel", onPointerUp, true);
+      selectionDragRef.current = null;
+      host.classList.remove("marquee-selecting");
+      if (selectionBoxRef.current) selectionBoxRef.current.style.display = "none";
       dimensionHandles.current.forEach((handle) => {
         handle.geometry.dispose();
         (handle.material as THREE.Material).dispose();
@@ -435,7 +548,9 @@ export function Viewport({ multiSelectMode = false, onObjectSelect, preview = nu
         ))}
         <span className="transform-hint">Seleccioná una pieza y arrastrá los controles</span>
       </div>
-      <div className="viewport-canvas" ref={hostRef} />
+      <div className="viewport-canvas" ref={hostRef}>
+        <div ref={selectionBoxRef} className="selection-marquee" aria-hidden="true" />
+      </div>
     </div>
   );
 }
