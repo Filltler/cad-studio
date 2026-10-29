@@ -4,6 +4,7 @@ import { calculateObjectBounds } from "../../services/booleanOperations";
 
 type AlignmentAxis = "x" | "y" | "z";
 type AlignmentMode = "min" | "center" | "max";
+type SpacingMode = "fixed" | "uniform";
 
 type EditorState = {
   objects: ProjectObject[];
@@ -19,6 +20,7 @@ type EditorState = {
   deleteObjects: (ids: string[]) => void;
   updateObject: (id: string, patch: Partial<Pick<ProjectObject, "position" | "dimensions" | "rotation" | "booleanRole" | "color">>) => void;
   alignObjects: (objectIds: string[], axis: AlignmentAxis, mode: AlignmentMode) => void;
+  spaceObjects: (objectIds: string[], axis: AlignmentAxis, mode: SpacingMode, gap: number) => void;
   applyBooleanResult: (objectIds: string[], name: string, vertices: number[]) => void; 
   applyHeightSplitResult: (objectId: string, name: string, lowerVertices: number[], upperVertices: number[]) => void;
   loadProjectObjects: (objects: ProjectObject[]) => void;
@@ -113,6 +115,78 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       : { past: [...state.past, cloneObjects(state.objects)].slice(-100), future: [] };
     return { ...history, objects: nextObjects };
   }),
+  spaceObjects: (objectIds, axis, mode, gap) => set((state) => {
+    const selectedObjects = state.objects.filter((object) => objectIds.includes(object.id));
+    if (selectedObjects.length < 2) return state;
+    if (mode === "fixed" && (!Number.isFinite(gap) || gap < 0)) {
+      throw new Error("La separación debe ser un número igual o mayor que 0 mm.");
+    }
+    if (mode === "uniform" && selectedObjects.length < 3) {
+      throw new Error("La distribución uniforme necesita al menos tres piezas.");
+    }
+
+    const workplaneTieBreakers: Record<AlignmentAxis, [AlignmentAxis, AlignmentAxis]> = {
+      x: ["z", "y"],
+      y: ["x", "z"],
+      z: ["x", "y"]
+    };
+    const centerOn = (bounds: ReturnType<typeof calculateObjectBounds>, coordinate: AlignmentAxis) => (bounds.min[coordinate] + bounds.max[coordinate]) / 2;
+    const arranged = selectedObjects
+      .map((object) => ({ object, bounds: calculateObjectBounds(object) }))
+      .sort((a, b) => {
+        const axisDelta = centerOn(a.bounds, axis) - centerOn(b.bounds, axis);
+        if (Math.abs(axisDelta) > 0.0005) return axisDelta;
+        for (const tieAxis of workplaneTieBreakers[axis]) {
+          const tieDelta = centerOn(a.bounds, tieAxis) - centerOn(b.bounds, tieAxis);
+          if (Math.abs(tieDelta) > 0.0005) return tieDelta;
+        }
+        const minDelta = a.bounds.min[axis] - b.bounds.min[axis];
+        if (Math.abs(minDelta) > 0.0005) return minDelta;
+        const maxDelta = a.bounds.max[axis] - b.bounds.max[axis];
+        if (Math.abs(maxDelta) > 0.0005) return maxDelta;
+        return a.object.id.localeCompare(b.object.id);
+      });
+    const shifts = new Map<string, number>();
+
+    if (mode === "fixed") {
+      let nextMinimum = arranged[0].bounds.max[axis] + gap;
+      for (const item of arranged.slice(1)) {
+        const delta = nextMinimum - item.bounds.min[axis];
+        shifts.set(item.object.id, delta);
+        nextMinimum = item.bounds.max[axis] + delta + gap;
+      }
+    } else {
+      const first = arranged[0];
+      const last = arranged[arranged.length - 1];
+      const totalSpan = last.bounds.max[axis] - first.bounds.min[axis];
+      const totalSize = arranged.reduce((sum, item) => sum + item.bounds.max[axis] - item.bounds.min[axis], 0);
+      const uniformGap = (totalSpan - totalSize) / (arranged.length - 1);
+      if (uniformGap < -0.0005) {
+        throw new Error("No hay espacio suficiente para distribuir las piezas sin que se superpongan. Separá los extremos.");
+      }
+
+      let nextMinimum = first.bounds.min[axis];
+      for (let index = 1; index < arranged.length - 1; index++) {
+        const previous = arranged[index - 1];
+        nextMinimum += previous.bounds.max[axis] - previous.bounds.min[axis] + Math.max(0, uniformGap);
+        shifts.set(arranged[index].object.id, nextMinimum - arranged[index].bounds.min[axis]);
+      }
+    }
+
+    let changed = false;
+    const nextObjects = state.objects.map((object) => {
+      const delta = shifts.get(object.id);
+      if (delta === undefined || Math.abs(delta) < 0.0005) return object;
+      changed = true;
+      return { ...object, position: { ...object.position, [axis]: roundMillimeters(object.position[axis] + delta) } };
+    });
+    if (!changed) return state;
+
+    const history = transactionStart
+      ? { past: state.past, future: state.future }
+      : { past: [...state.past, cloneObjects(state.objects)].slice(-100), future: [] };
+    return { ...history, objects: nextObjects };
+  }),
   deleteObjects: (ids) => set((state) => {
     const remove = new Set(ids);
     const next = state.objects.filter((object) => !remove.has(object.id));
@@ -170,4 +244,3 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     return { ...history, objects: [...state.objects.filter((object) => !objectIds.includes(object.id)), result], selectedId: result.id };
   })
 }));
-
