@@ -1,0 +1,516 @@
+From 80d2404d040598b520e12019fdfacd827cb8be79 Mon Sep 17 00:00:00 2001
+From: Micael Urquidi <110402953+Filltler@users.noreply.github.com>
+Date: Sat, 31 Oct 2026 10:42:43 -0300
+Subject: [PATCH] =?UTF-8?q?Permitir=20encastres=20y=20rotaci=C3=B3n=20en?=
+ =?UTF-8?q?=20cortes=20inclinados?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ src/app/App.tsx                    |  76 +++++++++++++-------
+ src/features/viewport/Viewport.tsx |  59 +++++++++++-----
+ src/services/booleanOperations.ts  | 109 ++++++++++++++++++++++++++---
+ 3 files changed, 193 insertions(+), 51 deletions(-)
+
+diff --git a/src/app/App.tsx b/src/app/App.tsx
+index 12e6ae3..49d76a7 100644
+--- a/src/app/App.tsx
++++ b/src/app/App.tsx
+@@ -4,7 +4,7 @@ import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
+ import { Viewport } from "../features/viewport/Viewport";
+ import { useEditorStore } from "../features/editor/editorStore";
+ import { listProjects, loadProject, saveProject } from "../services/storage/projectStorage";
+-import { addInterlocksToPlanarSplit, calculateBoolean, calculatePlanarCut, calculatePlanarSplit, calculateHollow, calculateObjectBounds, calculateObjectProjectionBounds, getCutPlaneNormal, getPlanarCutFaceBounds, suggestPlanarInterlocks, type BooleanOperation, type CutAxis, type CutTilt, type InterlockShape } from "../services/booleanOperations";
++import { addInterlocksToPlanarSplitOnPlane, calculateBoolean, calculatePlanarCut, calculatePlanarSplit, calculateHollow, calculateObjectBounds, calculateObjectProjectionBounds, getCutPlaneOrientation, getCutPlaneNormalFromOrientation, getCutTiltFromNormal, getPlanarCutFaceBoundsOnPlane, suggestPlanarInterlocks, type BooleanOperation, type CutAxis, type CutOrientation, type CutTilt, type InterlockShape } from "../services/booleanOperations";
+ import { parseSTL } from "../services/stlImport";
+ 
+ export function App() {
+@@ -19,6 +19,7 @@ export function App() {
+   const [cutEnabled, setCutEnabled] = useState(false);
+   const [cutAxis, setCutAxis] = useState<CutAxis>("y");
+   const [cutTilt, setCutTilt] = useState<CutTilt>({ x: 0, y: 0, z: 0 });
++  const [cutOrientation, setCutOrientation] = useState<CutOrientation>(() => getCutPlaneOrientation("y"));
+   const [cutPosition, setCutPosition] = useState("17");
+   const [cutPreview, setCutPreview] = useState<{ objectId: string; vertices: number[] } | null>(null);
+   const [cutBusy, setCutBusy] = useState(false);
+@@ -32,6 +33,7 @@ export function App() {
+   const [projects, setProjects] = useState<Array<{ id: string; name: string; updatedAt: string }>>([]);
+   const [stlImportBusy, setStlImportBusy] = useState(false);
+   const stlInputRef = useRef<HTMLInputElement>(null);
++  const pendingCutPositionRef = useRef<number | null>(null);
+   const objects = useEditorStore((s) => s.objects);
+   const selectedId = useEditorStore((s) => s.selectedId);
+   const addPrimitive = useEditorStore((s) => s.addPrimitive);
+@@ -56,7 +58,7 @@ export function App() {
+     catch { return null; }
+   }, [selected]);
+   const cutTiltAxes: Record<CutAxis, [CutAxis, CutAxis]> = { x: ["y", "z"], y: ["x", "z"], z: ["x", "y"] };
+-  const cutNormal = useMemo(() => getCutPlaneNormal(cutAxis, cutTilt), [cutAxis, cutTilt.x, cutTilt.y, cutTilt.z]);
++  const cutNormal = useMemo(() => getCutPlaneNormalFromOrientation(cutOrientation), [cutOrientation]);
+   const cutTilted = cutTiltAxes[cutAxis].some((axis) => Math.abs(cutTilt[axis]) > 1e-6);
+   const cutProjectionBounds = useMemo(() => {
+     if (!selected) return null;
+@@ -76,8 +78,19 @@ export function App() {
+   };
+   const updateCutTilt = (axis: CutAxis, value: number) => {
+     if (!Number.isFinite(value)) return;
+-    setCutTilt((current) => ({ ...current, [axis]: Math.max(-80, Math.min(80, value)) }));
+-    setInterlocksEnabled(false);
++    const next = { ...cutTilt, [axis]: Math.max(-180, Math.min(180, value)) };
++    if (cutPositionValid) pendingCutPositionRef.current = parsedCutPosition;
++    setCutTilt(next);
++    setCutOrientation(getCutPlaneOrientation(cutAxis, next));
++  };
++  const updateCutPlaneOrientation = (orientation: CutOrientation, position: number) => {
++    const normalized = new THREE.Quaternion(...orientation).normalize();
++    const nextOrientation: CutOrientation = [normalized.x, normalized.y, normalized.z, normalized.w];
++    const normal = getCutPlaneNormalFromOrientation(nextOrientation);
++    pendingCutPositionRef.current = position;
++    setCutPosition(String(roundForDisplay(position)));
++    setCutTilt(getCutTiltFromNormal(cutAxis, normal));
++    setCutOrientation(nextOrientation);
+   };
+   const cutPlaneSpec = useMemo(() => {
+     if (!cutEnabled || !selected || !cutBounds || !cutProjectionBounds) return null;
+@@ -85,25 +98,29 @@ export function App() {
+       objectId: selected.id,
+       axis: cutAxis,
+       normal: cutNormal,
++      orientation: cutOrientation,
+       tilted: cutTilted,
+-      position: cutPositionValid ? parsedCutPosition : (cutProjectionBounds.min + cutProjectionBounds.max) / 2,
++      position: Number.isFinite(parsedCutPosition) ? Math.min(cutMaximum, Math.max(cutMinimum, parsedCutPosition)) : (cutProjectionBounds.min + cutProjectionBounds.max) / 2,
+       bounds: {
+         min: [cutBounds.min.x, cutBounds.min.y, cutBounds.min.z] as [number, number, number],
+         max: [cutBounds.max.x, cutBounds.max.y, cutBounds.max.z] as [number, number, number]
+       }
+     };
+-  }, [cutEnabled, selected, cutBounds, cutProjectionBounds, cutAxis, cutNormal, cutTilted, cutPositionValid, parsedCutPosition]);
++  }, [cutEnabled, selected, cutBounds, cutProjectionBounds, cutAxis, cutNormal, cutOrientation, cutTilted, cutPositionValid, parsedCutPosition]);
+   const cutFaceBounds = useMemo(() => {
+-    if (cutTilted || !cutPreview || cutPreview.objectId !== selectedId || !cutPositionValid) return null;
+-    return getPlanarCutFaceBounds(cutPreview.vertices, cutAxis, parsedCutPosition);
+-  }, [cutPreview, selectedId, cutAxis, parsedCutPosition, cutPositionValid, cutTilted]);
++    if (!cutPreview || cutPreview.objectId !== selectedId || !cutPositionValid) return null;
++    return getPlanarCutFaceBoundsOnPlane(cutPreview.vertices, cutNormal, parsedCutPosition);
++  }, [cutPreview, selectedId, cutNormal, parsedCutPosition, cutPositionValid]);
++  const interlockThicknessBounds = useMemo(() => cutProjectionBounds
++    ? new THREE.Box3(new THREE.Vector3(0, cutProjectionBounds.min, 0), new THREE.Vector3(0, cutProjectionBounds.max, 0))
++    : null, [cutProjectionBounds]);
+   const parsedInterlockCount = Number(interlockCount);
+   const parsedInterlockClearance = Number(interlockClearance);
+-  const interlockSuggestion = cutBounds && !cutTilted
+-    ? suggestPlanarInterlocks(cutFaceBounds, cutBounds, cutAxis, parsedCutPosition, parsedInterlockCount, interlockShape, parsedInterlockClearance)
++  const interlockSuggestion = interlockThicknessBounds
++    ? suggestPlanarInterlocks(cutFaceBounds, interlockThicknessBounds, "y", parsedCutPosition, parsedInterlockCount, interlockShape, parsedInterlockClearance)
+     : null;
+   const interlockClearanceValid = Number.isFinite(parsedInterlockClearance) && parsedInterlockClearance >= 0.1 && parsedInterlockClearance <= 1;
+-  const cutCanUseInterlocks = Boolean(!cutTilted && interlockSuggestion?.available && interlockClearanceValid);
++  const cutCanUseInterlocks = Boolean(interlockSuggestion?.available && interlockClearanceValid);
+ 
+   const getBedBaseY = (object: typeof objects[number]) => {
+     if (object.kind !== "custom") return object.position.y - object.dimensions.y / 2;
+@@ -141,11 +158,14 @@ export function App() {
+   }, [selectedId, selected]);
+ 
+   useEffect(() => {
+-    if (!selected || !cutBounds || cutMaximum <= cutMinimum) {
++    if (!selected || !cutProjectionBounds || cutMaximum <= cutMinimum) {
+       setCutPosition("");
+       return;
+     }
+-    setCutPosition(String(roundForDisplay((cutBounds.min[cutAxis] + cutBounds.max[cutAxis]) / 2)));
++    const pending = pendingCutPositionRef.current;
++    pendingCutPositionRef.current = null;
++    const target = pending ?? (cutProjectionBounds.min + cutProjectionBounds.max) / 2;
++    setCutPosition(String(roundForDisplay(Math.min(cutMaximum, Math.max(cutMinimum, target)))));
+   }, [selectedId, cutAxis, cutProjectionBounds]);
+ 
+   useEffect(() => {
+@@ -336,7 +356,7 @@ export function App() {
+       return;
+     }
+     const addInterlocks = interlocksEnabled && !withoutInterlocks;
+-    if (addInterlocks && (!cutBounds || !cutCanUseInterlocks)) {
++    if (addInterlocks && !cutCanUseInterlocks) {
+       setNotice("En esta sección no entran los encastres seleccionados. Podés confirmar el corte sin encastres.");
+       return;
+     }
+@@ -346,12 +366,11 @@ export function App() {
+     try {
+       const cutParts = await calculatePlanarSplit(selected, cutAxis, parsedCutPosition, cutTilt);
+       let parts = cutParts;
+-      if (addInterlocks && cutBounds) {
+-        parts = await addInterlocksToPlanarSplit(
++      if (addInterlocks) {
++        parts = await addInterlocksToPlanarSplitOnPlane(
+           cutParts,
+-          cutAxis,
++          cutNormal,
+           parsedCutPosition,
+-          cutBounds,
+           interlockShape,
+           parsedInterlockCount,
+           parsedInterlockClearance
+@@ -739,6 +758,7 @@ export function App() {
+             preview={cutPreview}
+             cutPlane={cutPlaneSpec}
+             onCutPositionChange={boundedCutPosition}
++            onCutPlaneRotate={updateCutPlaneOrientation}
+           />
+           <div className="viewport-bottom">
+             <span>Arrastrá para orbitar · Shift+arrastrá para seleccionar · Esc para cancelar · Rueda para zoom</span>
+@@ -820,6 +840,8 @@ export function App() {
+                           onClick={() => {
+                             setCutAxis(axis);
+                             setCutTilt({ x: 0, y: 0, z: 0 });
++                            setCutOrientation(getCutPlaneOrientation(axis));
++                            pendingCutPositionRef.current = null;
+                             setInterlocksEnabled(false);
+                           }}
+                         >
+@@ -830,15 +852,15 @@ export function App() {
+                     <small className="cut-axis-label">{cutTilted ? "Plano inclinado desde " + cutAxisLabels[cutAxis] : cutAxisLabels[cutAxis]}</small>
+                     <div className="cut-tilt-options">
+                       <strong>Inclinación del plano · grados</strong>
+-                      <small>Girá alrededor de los dos ejes que cruzan el eje inicial. El plano puede inclinarse en el espacio.</small>
++                      <small>Elegí Rotar y usá los aros circulares sobre la pieza, o ajustá los ángulos acá.</small>
+                       {cutTiltAxes[cutAxis].map((axis) => (
+                         <label className="cut-angle-row" key={axis}>
+                           <span>{axis.toUpperCase()}</span>
+                           <input
+                             aria-label={"Inclinación del plano alrededor de " + axis.toUpperCase()}
+                             type="range"
+-                            min="-80"
+-                            max="80"
++                            min="-180"
++                            max="180"
+                             step="1"
+                             value={cutTilt[axis]}
+                             onChange={(event) => updateCutTilt(axis, Number(event.target.value))}
+@@ -846,8 +868,8 @@ export function App() {
+                           <input
+                             aria-label={"Ángulo del plano alrededor de " + axis.toUpperCase()}
+                             type="number"
+-                            min="-80"
+-                            max="80"
++                            min="-180"
++                            max="180"
+                             step="1"
+                             value={cutTilt[axis]}
+                             onChange={(event) => updateCutTilt(axis, Number(event.target.value))}
+@@ -883,12 +905,12 @@ export function App() {
+                       onChange={(event) => boundedCutPosition(Number(event.target.value))}
+                     />
+                     <small>Límites proyectados sobre el plano: {roundForDisplay(cutProjectionBounds?.min ?? 0)} a {roundForDisplay(cutProjectionBounds?.max ?? 0)} mm. Se calculan con los vértices de la malla.</small>
+-                    <small>{cutBusy ? "Calculando vista previa…" : cutPreview ? "Arrastrá cualquiera de los ejes del control para mover el plano. Al confirmar se crearán ambas partes." : "Mové la posición o incliná el plano para actualizar la vista previa."}</small>
++                    <small>{cutBusy ? "Calculando vista previa…" : cutPreview ? "En modo Mover, arrastrá un eje para desplazar el plano; en modo Rotar, usá los aros circulares para inclinarlo." : "Mové la posición o incliná el plano para actualizar la vista previa."}</small>
+                     <label className="interlock-toggle">
+-                      <input type="checkbox" checked={interlocksEnabled} disabled={cutTilted} onChange={(event) => setInterlocksEnabled(event.target.checked)} />
++                      <input type="checkbox" checked={interlocksEnabled} onChange={(event) => setInterlocksEnabled(event.target.checked)} />
+                       <span>Agregar encastres macho/hembra</span>
+                     </label>
+-                    {cutTilted && <small>Los encastres automáticos se ofrecen en cortes rectos. El corte inclinado se puede confirmar sin encastres.</small>}
++
+                     {interlocksEnabled && (
+                       <div className="interlock-options">
+                         <label>
+diff --git a/src/features/viewport/Viewport.tsx b/src/features/viewport/Viewport.tsx
+index a5c45a2..2143399 100644
+--- a/src/features/viewport/Viewport.tsx
++++ b/src/features/viewport/Viewport.tsx
+@@ -3,13 +3,14 @@ import * as THREE from "three";
+ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+ import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
+ import { useEditorStore } from "../editor/editorStore";
+-import type { CutAxis } from "../../services/booleanOperations";
++import type { CutAxis, CutOrientation } from "../../services/booleanOperations";
+ 
+ type TransformMode = "translate" | "rotate" | "scale";
+ type CutPlaneSpec = {
+   objectId: string;
+   axis: CutAxis;
+   normal: [number, number, number];
++  orientation: CutOrientation;
+   tilted: boolean;
+   position: number;
+   bounds: { min: [number, number, number]; max: [number, number, number] };
+@@ -22,6 +23,7 @@ type ViewportProps = {
+   preview?: { objectId: string; vertices: number[] } | null;
+   cutPlane?: CutPlaneSpec | null;
+   onCutPositionChange?: (position: number) => void;
++  onCutPlaneRotate?: (orientation: CutOrientation, position: number) => void;
+ };
+ 
+ const modeLabels: Record<TransformMode, string> = {
+@@ -30,7 +32,7 @@ const modeLabels: Record<TransformMode, string> = {
+   scale: "Escalar"
+ };
+ 
+-export function Viewport({ multiSelectMode = false, multiSelectedIds = [], onObjectSelect, onObjectsMarqueeSelect, preview = null, cutPlane = null, onCutPositionChange }: ViewportProps) {
++export function Viewport({ multiSelectMode = false, multiSelectedIds = [], onObjectSelect, onObjectsMarqueeSelect, preview = null, cutPlane = null, onCutPositionChange, onCutPlaneRotate }: ViewportProps) {
+   const hostRef = useRef<HTMLDivElement>(null);
+   const selectionBoxRef = useRef<HTMLDivElement>(null);
+   const objects = useEditorStore((s) => s.objects);
+@@ -59,6 +61,7 @@ export function Viewport({ multiSelectMode = false, multiSelectedIds = [], onObj
+   const previewRef = useRef(preview);
+   const cutPlaneRef = useRef(cutPlane);
+   const onCutPositionChangeRef = useRef(onCutPositionChange);
++  const onCutPlaneRotateRef = useRef(onCutPlaneRotate);
+   const selectionDragRef = useRef<{ pointerId: number; startX: number; startY: number } | null>(null);
+   objectsRef.current = objects;
+   selectedIdRef.current = selectedId;
+@@ -69,6 +72,7 @@ export function Viewport({ multiSelectMode = false, multiSelectedIds = [], onObj
+   previewRef.current = preview;
+   cutPlaneRef.current = cutPlane;
+   onCutPositionChangeRef.current = onCutPositionChange;
++  onCutPlaneRotateRef.current = onCutPlaneRotate;
+   const modeRef = useRef<TransformMode>("translate");
+   const dimensionHandles = useRef<THREE.Mesh[]>([]);
+   const dragState = useRef<{
+@@ -180,8 +184,15 @@ export function Viewport({ multiSelectMode = false, multiSelectedIds = [], onObj
+     transform.addEventListener("objectChange", () => {
+       const activeObject = transform.object;
+       if (activeObject?.userData.cutPlaneHandle) {
+-        const normal = cutPlaneRef.current?.normal;
+-        if (normal) onCutPositionChangeRef.current?.(activeObject.position.x * normal[0] + activeObject.position.y * normal[1] + activeObject.position.z * normal[2]);
++        if (transform.getMode() === "rotate") {
++          const orientation = activeObject.quaternion.clone().normalize();
++          const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(orientation).normalize();
++          const quaternion: CutOrientation = [orientation.x, orientation.y, orientation.z, orientation.w];
++          onCutPlaneRotateRef.current?.(quaternion, activeObject.position.dot(normal));
++        } else {
++          const normal = cutPlaneRef.current?.normal;
++          if (normal) onCutPositionChangeRef.current?.(activeObject.position.x * normal[0] + activeObject.position.y * normal[1] + activeObject.position.z * normal[2]);
++        }
+         return;
+       }
+       if (activeObject?.userData.multiMoveHandle) {
+@@ -527,11 +538,19 @@ export function Viewport({ multiSelectMode = false, multiSelectedIds = [], onObj
+     const activeMultiMove = !activeCutPlane && mode === "translate" && multiCount >= 2;
+     if (transform) {
+       if (activeCutPlane && cutGroup?.visible) {
+-        if (transform.getMode() !== "translate") transform.setMode("translate");
+-        if (transform.space !== "world") transform.setSpace("world");
+-        transform.showX = activeCutPlane.tilted || activeCutPlane.axis === "x";
+-        transform.showY = activeCutPlane.tilted || activeCutPlane.axis === "y";
+-        transform.showZ = activeCutPlane.tilted || activeCutPlane.axis === "z";
++        if (mode === "rotate") {
++          if (transform.getMode() !== "rotate") transform.setMode("rotate");
++          if (transform.space !== "local") transform.setSpace("local");
++          transform.showX = true;
++          transform.showY = true;
++          transform.showZ = false;
++        } else {
++          if (transform.getMode() !== "translate") transform.setMode("translate");
++          if (transform.space !== "world") transform.setSpace("world");
++          transform.showX = activeCutPlane.tilted || activeCutPlane.axis === "x";
++          transform.showY = activeCutPlane.tilted || activeCutPlane.axis === "y";
++          transform.showZ = activeCutPlane.tilted || activeCutPlane.axis === "z";
++        }
+         transform.getHelper().visible = true;
+         if (transform.object !== cutGroup) transform.attach(cutGroup);
+       } else if (activeMultiMove && multiGroup) {
+@@ -671,7 +690,7 @@ export function Viewport({ multiSelectMode = false, multiSelectedIds = [], onObj
+       const boundsCenter = minimum.clone().add(maximum).multiplyScalar(0.5);
+       const center = boundsCenter.addScaledVector(direction, activeCutPlane.position - boundsCenter.dot(direction));
+       cutGroup.position.copy(center);
+-      cutGroup.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), direction);
++      cutGroup.quaternion.set(...activeCutPlane.orientation);
+       cutSurface.rotation.set(0, 0, 0);
+       const span = maximum.sub(minimum).length() * 2 + 2;
+       cutSurface.scale.set(span, span, 1);
+@@ -679,11 +698,19 @@ export function Viewport({ multiSelectMode = false, multiSelectedIds = [], onObj
+       cutGroup.updateMatrixWorld(true);
+       if (transformRef.current) {
+         const transform = transformRef.current;
+-        if (transform.getMode() !== "translate") transform.setMode("translate");
+-        if (transform.space !== "world") transform.setSpace("world");
+-        transform.showX = activeCutPlane.tilted || activeCutPlane.axis === "x";
+-        transform.showY = activeCutPlane.tilted || activeCutPlane.axis === "y";
+-        transform.showZ = activeCutPlane.tilted || activeCutPlane.axis === "z";
++        if (modeRef.current === "rotate") {
++          if (transform.getMode() !== "rotate") transform.setMode("rotate");
++          if (transform.space !== "local") transform.setSpace("local");
++          transform.showX = true;
++          transform.showY = true;
++          transform.showZ = false;
++        } else {
++          if (transform.getMode() !== "translate") transform.setMode("translate");
++          if (transform.space !== "world") transform.setSpace("world");
++          transform.showX = activeCutPlane.tilted || activeCutPlane.axis === "x";
++          transform.showY = activeCutPlane.tilted || activeCutPlane.axis === "y";
++          transform.showZ = activeCutPlane.tilted || activeCutPlane.axis === "z";
++        }
+         transform.getHelper().visible = true;
+         if (transform.object !== cutGroup) transform.attach(cutGroup);
+       }
+@@ -755,7 +782,7 @@ export function Viewport({ multiSelectMode = false, multiSelectedIds = [], onObj
+             {key === "translate" ? "↔" : key === "rotate" ? "⟳" : "⤢"} {modeLabels[key]}
+           </button>
+         ))}
+-        <span className="transform-hint">{multiSelectedIds.filter((id) => objectsRef.current.some((object) => object.id === id)).length > 1 && mode === "translate" ? "Arrastrá un eje para mover todas las piezas seleccionadas" : "Seleccioná una pieza y arrastrá los controles"}</span>
++        <span className="transform-hint">{cutPlane ? (mode === "rotate" ? "Arrastrá los aros para inclinar el plano de corte" : "Arrastrá un eje para desplazar el plano de corte") : multiSelectedIds.filter((id) => objectsRef.current.some((object) => object.id === id)).length > 1 && mode === "translate" ? "Arrastrá un eje para mover todas las piezas seleccionadas" : "Seleccioná una pieza y arrastrá los controles"}</span>
+       </div>
+       <div className="viewport-canvas" ref={hostRef}>
+         <div ref={selectionBoxRef} className="selection-marquee" aria-hidden="true" />
+diff --git a/src/services/booleanOperations.ts b/src/services/booleanOperations.ts
+index 1a7e0c0..df9f9b8 100644
+--- a/src/services/booleanOperations.ts
++++ b/src/services/booleanOperations.ts
+@@ -6,20 +6,41 @@ import { addInterlocksInWorker, hollowCustomMeshInWorker, splitMeshInWorker, sub
+ export type BooleanOperation = "union" | "subtract" | "intersect";
+ export type CutAxis = "x" | "y" | "z";
+ export type CutTilt = { x: number; y: number; z: number };
++export type CutOrientation = [number, number, number, number];
+ 
+-/** Returns the unit normal for a preset axis rotated by world-space tilt angles. */
+-export function getCutPlaneNormal(axis: CutAxis, tilt: CutTilt = { x: 0, y: 0, z: 0 }): [number, number, number] {
+-  const normal = new THREE.Vector3(axis === "x" ? 1 : 0, axis === "y" ? 1 : 0, axis === "z" ? 1 : 0);
+-  const rotation = new THREE.Euler(
++/** Builds a plane orientation whose local Z axis is the cut normal. */
++export function getCutPlaneOrientation(axis: CutAxis, tilt: CutTilt = { x: 0, y: 0, z: 0 }): CutOrientation {
++  const baseNormal = new THREE.Vector3(axis === "x" ? 1 : 0, axis === "y" ? 1 : 0, axis === "z" ? 1 : 0);
++  const tiltRotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+     THREE.MathUtils.degToRad(tilt.x),
+     THREE.MathUtils.degToRad(tilt.y),
+     THREE.MathUtils.degToRad(tilt.z),
+     "XYZ"
+-  );
+-  normal.applyEuler(rotation).normalize();
++  ));
++  const baseRotation = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), baseNormal);
++  const orientation = tiltRotation.multiply(baseRotation);
++  return [orientation.x, orientation.y, orientation.z, orientation.w];
++}
++
++export function getCutPlaneNormalFromOrientation(orientation: CutOrientation): [number, number, number] {
++  const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(new THREE.Quaternion(...orientation)).normalize();
+   return [normal.x, normal.y, normal.z];
+ }
+ 
++/** Returns the unit normal for a preset axis rotated by world-space tilt angles. */
++export function getCutPlaneNormal(axis: CutAxis, tilt: CutTilt = { x: 0, y: 0, z: 0 }): [number, number, number] {
++  return getCutPlaneNormalFromOrientation(getCutPlaneOrientation(axis, tilt));
++}
++
++/** Finds the two useful tilt angles for a normal; the third angle is irrelevant to the plane. */
++export function getCutTiltFromNormal(axis: CutAxis, normal: [number, number, number]): CutTilt {
++  const [x, y, z] = new THREE.Vector3(...normal).normalize().toArray();
++  const degrees = THREE.MathUtils.radToDeg;
++  if (axis === "x") return { x: 0, y: degrees(Math.atan2(-z, Math.hypot(x, y))), z: degrees(Math.atan2(y, x)) };
++  if (axis === "y") return { x: degrees(Math.atan2(z, Math.hypot(x, y))), y: 0, z: degrees(Math.atan2(-x, y)) };
++  return { x: degrees(Math.atan2(-y, Math.hypot(x, z))), y: degrees(Math.atan2(x, z)), z: 0 };
++}
++
+ type ManifoldApi = Awaited<ReturnType<typeof Module>>;
+ let manifoldPromise: Promise<ManifoldApi> | null = null;
+ 
+@@ -508,7 +529,7 @@ export type PlanarCutFaceBounds = {
+ };
+ export type InterlockSuggestion = { diameter: number; depth: number; embed: number; available: boolean };
+ 
+-export function getPlanarCutFaceBounds(vertices: number[], axis: CutAxis, coordinate: number): PlanarCutFaceBounds | null {
++export function getPlanarCutFaceBounds(vertices: ArrayLike<number>, axis: CutAxis, coordinate: number): PlanarCutFaceBounds | null {
+   const faceAxes: Record<CutAxis, [CutAxis, CutAxis]> = { x: ["y", "z"], y: ["x", "z"], z: ["x", "y"] };
+   const [firstAxis, secondAxis] = faceAxes[axis];
+   const axisIndex = { x: 0, y: 1, z: 2 } as const;
+@@ -537,6 +558,35 @@ export function getPlanarCutFaceBounds(vertices: number[], axis: CutAxis, coordi
+   return { firstAxis, secondAxis, minFirst, maxFirst, minSecond, maxSecond };
+ }
+ 
++function getPlaneCoordinateRotation(normal: [number, number, number], inverse = false): THREE.Matrix4 {
++  const direction = new THREE.Vector3(...normal).normalize();
++  const quaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
++  if (inverse) quaternion.invert();
++  return new THREE.Matrix4().makeRotationFromQuaternion(quaternion);
++}
++
++function transformTriangleSoup(vertices: ArrayLike<number>, matrix: THREE.Matrix4): Float32Array {
++  const transformed = new Float32Array(vertices.length);
++  const elements = matrix.elements;
++  for (let index = 0; index + 2 < vertices.length; index += 3) {
++    const x = vertices[index], y = vertices[index + 1], z = vertices[index + 2];
++    transformed[index] = elements[0] * x + elements[4] * y + elements[8] * z;
++    transformed[index + 1] = elements[1] * x + elements[5] * y + elements[9] * z;
++    transformed[index + 2] = elements[2] * x + elements[6] * y + elements[10] * z;
++  }
++  return transformed;
++}
++
++/** Finds the cut face in a local coordinate frame where the plane normal is +Y. */
++export function getPlanarCutFaceBoundsOnPlane(
++  vertices: ArrayLike<number>,
++  normal: [number, number, number],
++  coordinate: number
++): PlanarCutFaceBounds | null {
++  const localVertices = transformTriangleSoup(vertices, getPlaneCoordinateRotation(normal, true));
++  return getPlanarCutFaceBounds(localVertices, "y", coordinate);
++}
++
+ function elasticFootprint(width: number, clearance: number): number {
+   const stemWidth = Math.min(1.6, Math.max(0.65, width * 0.16));
+   const gap = stemWidth * 0.65;
+@@ -666,7 +716,7 @@ function combineTriangleSoups(parts: Float32Array[]): Float32Array {
+   return combined;
+ }
+ export async function addInterlocksToPlanarSplit(
+-  parts: { negative: number[]; positive: number[] },
++  parts: { negative: ArrayLike<number>; positive: ArrayLike<number> },
+   axis: CutAxis,
+   coordinate: number,
+   bounds: THREE.Box3,
+@@ -772,6 +822,49 @@ export async function addInterlocksToPlanarSplit(
+   }
+ }
+ 
++/** Adds matching connectors to a split along an arbitrary plane orientation. */
++export async function addInterlocksToPlanarSplitOnPlane(
++  parts: { negative: number[]; positive: number[] },
++  normal: [number, number, number],
++  coordinate: number,
++  shape: InterlockShape,
++  count: number,
++  clearance: number
++): Promise<{ negative: number[]; positive: number[] }> {
++  const worldToLocal = getPlaneCoordinateRotation(normal, true);
++  const localToWorld = getPlaneCoordinateRotation(normal);
++  const localNegative = transformTriangleSoup(parts.negative, worldToLocal);
++  const localPositive = transformTriangleSoup(parts.positive, worldToLocal);
++  const minimum = new THREE.Vector3(Infinity, Infinity, Infinity);
++  const maximum = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
++  for (const vertices of [localNegative, localPositive]) {
++    for (let index = 0; index + 2 < vertices.length; index += 3) {
++      minimum.x = Math.min(minimum.x, vertices[index]);
++      minimum.y = Math.min(minimum.y, vertices[index + 1]);
++      minimum.z = Math.min(minimum.z, vertices[index + 2]);
++      maximum.x = Math.max(maximum.x, vertices[index]);
++      maximum.y = Math.max(maximum.y, vertices[index + 1]);
++      maximum.z = Math.max(maximum.z, vertices[index + 2]);
++    }
++  }
++  if (!Number.isFinite(minimum.x) || !Number.isFinite(maximum.x)) {
++    throw new Error("No se pudo medir la superficie del corte inclinado.");
++  }
++  const localBounds = new THREE.Box3(minimum, maximum);
++  const localParts = await addInterlocksToPlanarSplit(
++    { negative: localNegative, positive: localPositive },
++    "y",
++    coordinate,
++    localBounds,
++    shape,
++    count,
++    clearance
++  );
++  return {
++    negative: Array.from(transformTriangleSoup(localParts.negative, localToWorld)),
++    positive: Array.from(transformTriangleSoup(localParts.positive, localToWorld))
++  };
++}
+ /** Compatibility wrappers for the original Y-height cut behavior. */
+ export function calculateHeightCut(object: ProjectObject, height: number, signal?: AbortSignal): Promise<number[]> {
+   return calculatePlanarCut(object, "y", height, signal);
+-- 
+2.53.0.windows.3
+
